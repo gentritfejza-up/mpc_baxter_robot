@@ -30,8 +30,8 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
         | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros/ubuntu focal main" \
         > /etc/apt/sources.list.d/ros-latest.list && \
-    apt-get update && apt-get install -y \
-    ros-noetic-desktop-full \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ros-noetic-desktop \
     python3-catkin-tools \
     python3-rosdep \
     python3-rosinstall \
@@ -39,7 +39,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc \
     python3-wstool \
     && rm -rf /var/lib/apt/lists/*
 
-RUN rosdep init || true && rosdep update
+RUN rosdep init || true
 
 RUN apt-get update && apt-get install -y \
     libeigen3-dev \
@@ -73,4 +73,5 @@ RUN mkdir -p ${WORKSPACE} && chown -R ${UID}:${GID} ${WORKSPACE}
 RUN echo "source /opt/ros/noetic/setup.bash" >> /home/${USERNAME}/.bashrc
 
 USER ${USERNAME}
+RUN rosdep update
 WORKDIR ${WORKSPACE}

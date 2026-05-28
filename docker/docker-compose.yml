@@ -10,7 +10,6 @@ services:
     tty: true
     ipc: host
     privileged: false
-    runtime: nvidia
     deploy:
       resources:
         reservations:
@@ -21,9 +20,10 @@ services:
     volumes:
       - ..:/workspace
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ${HOME}/.Xauthority:/home/robot/.Xauthority:ro
+      - ${HOME}/.Xauthority:/tmp/.Xauthority:ro
     environment:
       - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/tmp/.Xauthority
       - QT_X11_NO_MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all

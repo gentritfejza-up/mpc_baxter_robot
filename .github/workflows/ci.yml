@@ -23,4 +23,3 @@ jobs:
           context: .
           file: docker/Dockerfile
           tags: mpc_baxter_robot:ci
-          load: true

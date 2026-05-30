@@ -1,0 +1,24 @@
+[submodule "src/baxter_simulator"]
+	path = src/baxter_simulator
+	url = https://github.com/GentritFejza/baxter_simulator.git
+	branch = baxter_devel
+[submodule "src/baxter"]
+	path = src/baxter
+	url = https://github.com/GentritFejza/baxter.git
+	branch = master
+[submodule "src/baxter_interface"]
+	path = src/baxter_interface
+	url = https://github.com/GentritFejza/baxter_interface.git
+	branch = baxter_devel
+[submodule "src/baxter_tools"]
+	path = src/baxter_tools
+	url = https://github.com/GentritFejza/baxter_tools.git
+	branch = baxter_devel
+[submodule "src/baxter_common"]
+	path = src/baxter_common
+	url = https://github.com/GentritFejza/baxter_common.git
+	branch = baxter_devel
+[submodule "src/baxter_examples"]
+	path = src/baxter_examples
+	url = https://github.com/GentritFejza/baxter_examples.git
+	branch = baxter_devel

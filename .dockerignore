@@ -1,0 +1,15 @@
+.git
+.github
+.vscode
+.idea
+build
+devel
+install
+logs
+__pycache__
+*.pyc
+*.pyo
+*.swp
+*.bak
+.catkin_workspace
+compile_commands.json

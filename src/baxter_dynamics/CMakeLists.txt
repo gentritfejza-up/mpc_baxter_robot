@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(catkin REQUIRED COMPONENTS
+  baxter_interface_cpp
   roscpp
 )
 find_package(Eigen3 REQUIRED)
@@ -12,7 +13,7 @@ find_package(Eigen3 REQUIRED)
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
-  CATKIN_DEPENDS roscpp
+  CATKIN_DEPENDS baxter_interface_cpp roscpp
 )
 
 include_directories(
@@ -36,6 +37,16 @@ add_dependencies(${PROJECT_NAME}
   ${catkin_EXPORTED_TARGETS}
 )
 
+add_executable(run_lagrange_euler
+  src/lagrange_euler_node.cpp
+  src/lagrange_euler_main.cpp
+)
+
+target_link_libraries(run_lagrange_euler PUBLIC
+  ${PROJECT_NAME}
+  ${catkin_LIBRARIES}
+)
+
 install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
@@ -49,4 +60,8 @@ install(DIRECTORY include/${PROJECT_NAME}/
 
 install(DIRECTORY config/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
+)
+
+install(DIRECTORY launch/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
 )

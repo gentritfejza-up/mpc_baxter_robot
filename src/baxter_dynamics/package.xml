@@ -3,7 +3,7 @@
   <name>baxter_dynamics</name>
   <version>1.0.0</version>
   <description>
-    Baxter Lagrange-Euler dynamics library and parameter configuration.
+    Baxter Lagrange-Euler dynamics library, runtime node, and parameter configuration.
   </description>
 
   <maintainer email="gentritfejza@gmail.com">Gentrit Fejza</maintainer>
@@ -11,6 +11,7 @@
 
   <buildtool_depend>catkin</buildtool_depend>
 
+  <depend>baxter_interface_cpp</depend>
   <depend>roscpp</depend>
 
   <build_depend>eigen</build_depend>

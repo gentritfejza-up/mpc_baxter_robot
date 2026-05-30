@@ -1,0 +1,12 @@
+<launch>
+  <arg name="limb" default="left" doc="Which limb to control: left or right" />
+
+  <rosparam command="load"
+            file="$(find baxter_dynamics)/config/dynamics_params.yaml" />
+
+  <node name="lagrange_euler_node_$(arg limb)"
+        pkg="baxter_dynamics"
+        type="run_lagrange_euler"
+        output="screen"
+        args="$(arg limb)" />
+</launch>

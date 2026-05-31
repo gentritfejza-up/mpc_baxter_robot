@@ -9,6 +9,8 @@ LagrangeEulerNode::LagrangeEulerNode(ros::NodeHandle &nh,
       limb_(std::make_unique<Limb>(limb_side)) {
   nh.param("robot/control/spinner_threads", spinner_threads_, 5);
   nh.param("robot/control/lagrange_euler_rate_hz", loop_rate_hz_, 800);
+  nh.param("robot/control/acceleration_ref_timeout_sec",
+           acceleration_ref_timeout_sec_, 0.2);
 }
 
 void LagrangeEulerNode::processComputedTorque() {
@@ -21,6 +23,11 @@ void LagrangeEulerNode::processComputedTorque() {
     ROS_WARN_THROTTLE(
         1,
         "Joint states or MPC acceleration references are not yet available.");
+    return;
+  }
+
+  if (limb_->accelerationRefAgeSec() > acceleration_ref_timeout_sec_) {
+    ROS_WARN_THROTTLE(1, "Acceleration references are stale; skipping torque command.");
     return;
   }
 

@@ -14,6 +14,7 @@ catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
   CATKIN_DEPENDS baxter_interface_cpp roscpp
+  DEPENDS Eigen3
 )
 
 include_directories(

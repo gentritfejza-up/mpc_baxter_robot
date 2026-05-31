@@ -24,4 +24,5 @@ private:
   std::unordered_map<std::string, double> joint_accelerations_;
   int spinner_threads_{5};
   int loop_rate_hz_{800};
+  double acceleration_ref_timeout_sec_{0.2};
 };

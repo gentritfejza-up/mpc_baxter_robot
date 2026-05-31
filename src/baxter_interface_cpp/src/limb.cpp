@@ -1,6 +1,7 @@
 #include "baxter_interface_cpp/limb.hpp"
 
 #include <algorithm>
+#include <limits>
 
 Limb::Limb(const std::string &limb_name) : name_(limb_name) {
   const std::string ns = "/robot/limb/" + limb_name + "/";
@@ -36,6 +37,15 @@ std::unordered_map<std::string, double> Limb::jointAccelerationsRef() const {
   return joint_acceleration_;
 }
 
+double Limb::accelerationRefAgeSec() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (last_acceleration_ref_stamp_.isZero()) {
+    return std::numeric_limits<double>::infinity();
+  }
+
+  return (ros::Time::now() - last_acceleration_ref_stamp_).toSec();
+}
+
 void Limb::setJointTorques(
     const std::unordered_map<std::string, double> &torques) {
   baxter_core_msgs::JointCommand cmd_msg;
@@ -61,20 +71,35 @@ void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr &msg) {
       continue;
     }
 
-    joint_angle_[msg->name[index]] = msg->position[index];
-    joint_velocity_[msg->name[index]] = msg->velocity[index];
+    if (index < msg->position.size()) {
+      joint_angle_[msg->name[index]] = msg->position[index];
+    }
+
+    if (index < msg->velocity.size()) {
+      joint_velocity_[msg->name[index]] = msg->velocity[index];
+    }
   }
 }
 
 void Limb::onJointAccelerations(
     const baxter_core_msgs::AccelerationCommand::ConstPtr &msg) {
   std::lock_guard<std::mutex> lock(mutex_);
+  bool updated = false;
   for (size_t index = 0; index < msg->joint_names.size(); ++index) {
     if (!ownsJoint(msg->joint_names[index])) {
       continue;
     }
 
+    if (index >= msg->accelerations.size()) {
+      break;
+    }
+
     joint_acceleration_[msg->joint_names[index]] = msg->accelerations[index];
+    updated = true;
+  }
+
+  if (updated) {
+    last_acceleration_ref_stamp_ = ros::Time::now();
   }
 }
 

@@ -14,6 +14,7 @@
   <depend>baxter_interface_cpp</depend>
   <depend>roscpp</depend>
 
-  <build_depend>eigen</build_depend>
-  <exec_depend>eigen</exec_depend>
+  <build_depend>eigen3</build_depend>
+  <build_export_depend>eigen3</build_export_depend>
+  <exec_depend>eigen3</exec_depend>
 </package>

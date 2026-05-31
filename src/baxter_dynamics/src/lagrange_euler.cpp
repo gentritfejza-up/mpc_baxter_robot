@@ -4,7 +4,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -77,7 +76,14 @@ void LagrangeEuler::setInertia(ros::NodeHandle &nh) {
       nh.getParam("robot/limb/inertia/Ixy", Ixy_vec) &&
       nh.getParam("robot/limb/inertia/Iyz", Iyz_vec) &&
       nh.getParam("robot/limb/inertia/Izx", Izx_vec) &&
-      nh.getParam("robot/limb/link_masses", link_mass)) {
+      nh.getParam("robot/limb/link_masses", link_mass) &&
+      static_cast<int>(Ixx_vec.size()) == number_of_links_ &&
+      static_cast<int>(Iyy_vec.size()) == number_of_links_ &&
+      static_cast<int>(Izz_vec.size()) == number_of_links_ &&
+      static_cast<int>(Ixy_vec.size()) == number_of_links_ &&
+      static_cast<int>(Iyz_vec.size()) == number_of_links_ &&
+      static_cast<int>(Izx_vec.size()) == number_of_links_ &&
+      static_cast<int>(link_mass.size()) == number_of_links_) {
     Ixx_ = Eigen::VectorXd::Map(Ixx_vec.data(), Ixx_vec.size());
     Iyy_ = Eigen::VectorXd::Map(Iyy_vec.data(), Iyy_vec.size());
     Izz_ = Eigen::VectorXd::Map(Izz_vec.data(), Izz_vec.size());
@@ -87,7 +93,7 @@ void LagrangeEuler::setInertia(ros::NodeHandle &nh) {
     link_mass_ = Eigen::VectorXd::Map(link_mass.data(), link_mass.size());
   } else {
     ROS_ERROR("Failed to load inertia parameters.");
-    ros::shutdown();
+    throw std::runtime_error("Invalid inertia or link mass parameters.");
   }
 
   std::vector<double> com_x, com_y, com_z, com_w;
@@ -105,7 +111,7 @@ void LagrangeEuler::setInertia(ros::NodeHandle &nh) {
     }
   } else {
     ROS_ERROR("Failed to load the center of mass data.");
-    ros::shutdown();
+    throw std::runtime_error("Invalid center of mass parameters.");
   }
 
   std::vector<double> qj_data;
@@ -114,7 +120,7 @@ void LagrangeEuler::setInertia(ros::NodeHandle &nh) {
         Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(qj_data.data());
   } else {
     ROS_ERROR("Failed to load Q_j matrix.");
-    ros::shutdown();
+    throw std::runtime_error("Invalid Q_j matrix parameter.");
   }
 }
 
@@ -127,7 +133,7 @@ std::vector<Eigen::Matrix4d> LagrangeEuler::inertia_mat() {
   std::vector<Eigen::Matrix4d> J_i_mat;
   for (int i = 0; i < number_of_links_; i++) {
     Eigen::Matrix4d J_i;
-    J_i << (-Ixx_(i) + Iyy_[i] + Izz_(i)) / 2, Ixy_(i), Izx_(i),
+    J_i << (-Ixx_(i) + Iyy_(i) + Izz_(i)) / 2, Ixy_(i), Izx_(i),
         link_mass_(i) * centre_of_mass_(i, 0), Ixy_(i),
         (Ixx_(i) - Iyy_(i) + Izz_(i)) / 2, Iyz_(i),
         link_mass_(i) * centre_of_mass_(i, 1), Izx_(i), Iyz_(i),
@@ -209,7 +215,7 @@ LagrangeEuler::M_mat(const std::vector<Eigen::Matrix4d> &J_i,
   return M_matrix;
 }
 
-Eigen::MatrixXd LagrangeEuler::C_mat(
+Eigen::VectorXd LagrangeEuler::C_vec(
     const std::vector<Eigen::Matrix4d> &J_i,
     const std::vector<Eigen::Matrix4d> &Uij,
     const std::vector<Eigen::Matrix4d> &Uijk,
@@ -241,7 +247,7 @@ Eigen::MatrixXd LagrangeEuler::C_mat(
   return H_i;
 }
 
-Eigen::MatrixXd
+Eigen::VectorXd
 LagrangeEuler::G_mat(const std::vector<Eigen::Matrix4d> &Uij) {
   Eigen::VectorXd g{Eigen::VectorXd(kConstantFour)};
   Eigen::VectorXd centre{Eigen::VectorXd(kConstantFour)};
@@ -270,7 +276,8 @@ std::unordered_map<std::string, double> LagrangeEuler::Torque_calc(
   std::vector<Eigen::Matrix4d> inertia_matrices;
   std::vector<Eigen::Matrix4d> uij_matrices;
   std::vector<Eigen::Matrix4d> uijk_matrices;
-  Eigen::MatrixXd m_mat, c_mat, g_mat;
+  Eigen::MatrixXd m_mat;
+  Eigen::VectorXd c_vec, g_vec;
 
   for (size_t i = 0; i < joint_names_.size(); i++) {
     const auto joint_name = joint_names_[i];
@@ -282,36 +289,17 @@ std::unordered_map<std::string, double> LagrangeEuler::Torque_calc(
     }
   }
 
-  std::thread transformation_thread(
-      [&]() { transformation_matrices = this->transformation_matrix(joint_angles); });
-  std::thread inertia_thread(
-      [&]() { inertia_matrices = this->inertia_mat(); });
+    transformation_matrices = this->transformation_matrix(joint_angles);
+    inertia_matrices = this->inertia_mat();
+    uij_matrices = this->U_ij(transformation_matrices);
+    uijk_matrices = this->U_ijk(transformation_matrices);
 
-  transformation_thread.join();
+    m_mat = this->M_mat(inertia_matrices, uij_matrices);
+    c_vec = this->C_vec(inertia_matrices, uij_matrices, uijk_matrices,
+              joint_velocities);
+    g_vec = this->G_mat(uij_matrices);
 
-  std::thread uij_thread(
-      [&]() { uij_matrices = this->U_ij(transformation_matrices); });
-  std::thread uijk_thread(
-      [&]() { uijk_matrices = this->U_ijk(transformation_matrices); });
-
-  uij_thread.join();
-  inertia_thread.join();
-  std::thread m_mat_thread(
-      [&]() { m_mat = this->M_mat(inertia_matrices, uij_matrices); });
-
-  uijk_thread.join();
-  std::thread c_mat_thread([&]() {
-    c_mat = this->C_mat(inertia_matrices, uij_matrices, uijk_matrices,
-                        joint_velocities);
-  });
-  std::thread g_mat_thread(
-      [&]() { g_mat = this->G_mat(uij_matrices); });
-
-  m_mat_thread.join();
-  c_mat_thread.join();
-  g_mat_thread.join();
-
-  Eigen::VectorXd tau = m_mat * accelerations + c_mat + g_mat;
+    Eigen::VectorXd tau = m_mat * accelerations + c_vec + g_vec;
   return EigenVectorToMap(tau, joint_names_);
 }
 

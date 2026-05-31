@@ -12,10 +12,10 @@ class Robot {
 public:
   Robot(const std::string &limb, ros::NodeHandle &nh);
 
-  std::unordered_map<std::string, Eigen::Vector4d> getDhParams() const;
-  std::unordered_map<std::string, std::pair<double, double>>
+  const std::unordered_map<std::string, Eigen::Vector4d> &getDhParams() const;
+  const std::unordered_map<std::string, std::pair<double, double>> &
   getAngleLimits() const;
-  std::vector<std::string> getJointNames() const;
+  const std::vector<std::string> &getJointNames() const;
 
 private:
   void computeDHref(ros::NodeHandle &nh);

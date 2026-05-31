@@ -14,8 +14,7 @@ namespace baxter {
 class ForwardKinematics {
 public:
   ForwardKinematics(const std::string &limb, ros::NodeHandle &nh);
-  ForwardKinematics(const std::string &limb, ros::NodeHandle &nh,
-                    std::shared_ptr<Robot> baxter);
+  ForwardKinematics(ros::NodeHandle &nh, std::shared_ptr<Robot> baxter);
 
   std::vector<Eigen::Matrix4d> solveIntermediateFK(
       const std::unordered_map<std::string, double> &joint_angles);

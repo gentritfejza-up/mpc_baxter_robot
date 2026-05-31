@@ -2,17 +2,17 @@
 
 #include <cmath>
 #include <memory>
+#include <utility>
 
 namespace baxter {
 
-ForwardKinematics::ForwardKinematics(const std::string &limb,
-                                     ros::NodeHandle &nh,
-                                     std::shared_ptr<Robot> baxter)
-    : robot_(baxter) {}
+ForwardKinematics::ForwardKinematics(ros::NodeHandle &nh,
+                   std::shared_ptr<Robot> baxter)
+  : robot_(std::move(baxter)) {}
 
 ForwardKinematics::ForwardKinematics(const std::string &limb,
                                      ros::NodeHandle &nh)
-    : ForwardKinematics(limb, nh, std::make_shared<Robot>(limb, nh)) {}
+  : ForwardKinematics(nh, std::make_shared<Robot>(limb, nh)) {}
 
 bool ForwardKinematics::checkJointLimits(
     const std::unordered_map<std::string, double> &joint_angles) const {

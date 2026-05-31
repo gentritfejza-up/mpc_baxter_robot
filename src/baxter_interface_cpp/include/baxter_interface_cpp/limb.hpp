@@ -19,6 +19,7 @@ public:
   std::unordered_map<std::string, double> jointAngles() const;
   std::unordered_map<std::string, double> jointVelocities() const;
   std::unordered_map<std::string, double> jointAccelerationsRef() const;
+  double accelerationRefAgeSec() const;
   void setJointTorques(const std::unordered_map<std::string, double> &torques);
 
 private:
@@ -37,5 +38,6 @@ private:
   std::unordered_map<std::string, double> joint_acceleration_;
   std::unordered_map<std::string, std::vector<std::string>> joint_names_;
   std::string name_;
+  ros::Time last_acceleration_ref_stamp_;
   mutable std::mutex mutex_;
 };

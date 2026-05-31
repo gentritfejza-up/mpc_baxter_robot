@@ -7,10 +7,7 @@
 
 namespace baxter {
 
-namespace {
-constexpr int kConstantOne{1};
-constexpr int kConstantFour{4};
-} // namespace
+inline constexpr int kConstantFour = 4;
 
 class LagrangeEuler {
 public:
@@ -63,12 +60,12 @@ private:
   U_ijk(const std::vector<Eigen::Matrix4d> &transformation_mat);
   Eigen::MatrixXd M_mat(const std::vector<Eigen::Matrix4d> &J_i,
                         const std::vector<Eigen::Matrix4d> &Uij);
-  Eigen::MatrixXd
-  C_mat(const std::vector<Eigen::Matrix4d> &J_i,
-        const std::vector<Eigen::Matrix4d> &Uij,
-        const std::vector<Eigen::Matrix4d> &Uijk,
-        const std::unordered_map<std::string, double> &joint_velocities);
-  Eigen::MatrixXd G_mat(const std::vector<Eigen::Matrix4d> &Uij);
+    Eigen::VectorXd
+    C_vec(const std::vector<Eigen::Matrix4d> &J_i,
+      const std::vector<Eigen::Matrix4d> &Uij,
+      const std::vector<Eigen::Matrix4d> &Uijk,
+      const std::unordered_map<std::string, double> &joint_velocities);
+  Eigen::VectorXd G_mat(const std::vector<Eigen::Matrix4d> &Uij);
 };
 
 } // namespace baxter

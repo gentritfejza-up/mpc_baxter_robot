@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>baxter_dynamics</name>
+  <version>1.0.0</version>
+  <description>
+    Baxter Lagrange-Euler dynamics library, runtime node, and parameter configuration.
+  </description>
+
+  <maintainer email="gentritfejza@gmail.com">Gentrit Fejza</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>baxter_interface_cpp</depend>
+  <depend>roscpp</depend>
+
+  <build_depend>eigen3</build_depend>
+  <build_export_depend>eigen3</build_export_depend>
+  <exec_depend>eigen3</exec_depend>
+</package>

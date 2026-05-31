@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>baxter_interface_cpp</name>
+  <version>0.1.0</version>
+  <description>Minimal C++ Baxter limb client used by the dynamics runtime node.</description>
+
+  <maintainer email="gentritfejza@gmail.com">Gentrit Fejza</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>baxter_core_msgs</depend>
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+</package>

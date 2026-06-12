@@ -1,0 +1,11 @@
+robot:
+  solver_mode: "qc"  # "qc" or "time_scaling"
+  acceleration_max: [3.0, 3.0, 3.0, 3.0, 6.0, 10.0, 10.0]
+  acceleration_min: [-3.0, -3.0, -3.0, -3.0, -6.0, -10.0, -10.0]
+  jerk_max: [10.0, 5.0, 8.0, 8.0, 10.0, 20.0, 20.0]
+  jerk_min: [-10.0, -10.0, -10.0, -10.0, -10.0, -20.0, -20.0]
+  safety:
+    ee_z_constraint_enabled: false
+    ee_z_min_m: -0.20
+    ee_z_constraint_steps: 8
+    ee_base_link: "base"

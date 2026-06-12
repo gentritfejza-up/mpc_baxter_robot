@@ -7,19 +7,24 @@ vars:
 
 tasks:
   docker:build:
-    desc: Build the development Docker image
+    desc: Build the Docker image then compile the catkin workspace
     cmds:
       - docker compose -f {{.COMPOSE_FILE}} build {{.SERVICE}}
+      - docker compose -f {{.COMPOSE_FILE}} run --rm {{.SERVICE}}
+        bash -c "source /opt/ros/noetic/setup.bash && cd /workspace && catkin_make"
+
+  docker:run:
+    desc: Start the container and open an interactive shell
+    cmds:
+      - docker compose -f {{.COMPOSE_FILE}} run --rm {{.SERVICE}} bash
 
   docker:up:
     desc: Start the development container in the background
-    deps: [docker:build]
     cmds:
       - docker compose -f {{.COMPOSE_FILE}} up -d {{.SERVICE}}
 
   docker:shell:
-    desc: Open a shell in the development container
-    deps: [docker:up]
+    desc: Open a shell in a running container
     cmds:
       - docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}} bash
 
@@ -27,3 +32,8 @@ tasks:
     desc: Stop the development container
     cmds:
       - docker compose -f {{.COMPOSE_FILE}} down
+
+  clean:
+    desc: Remove catkin build and devel artifacts (forces full rebuild)
+    cmds:
+      - rm -rf build/ devel/

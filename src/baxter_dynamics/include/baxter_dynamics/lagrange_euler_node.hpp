@@ -25,4 +25,7 @@ private:
   int spinner_threads_{5};
   int loop_rate_hz_{800};
   double acceleration_ref_timeout_sec_{0.2};
+  bool torque_control_active_{false};
+
+  void exitTorqueControl();
 };

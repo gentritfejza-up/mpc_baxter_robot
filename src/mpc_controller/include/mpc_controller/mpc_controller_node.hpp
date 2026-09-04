@@ -60,6 +60,8 @@ class MPCControlManager {
   std::string ee_base_link_{"base"};
   std::string ee_end_link_;
   std::vector<int> mpc_to_kdl_index_;
+  std::vector<double> previous_applied_accelerations_ =
+      std::vector<double>(kNumJoints, 0.0);
 
   /**
    * @brief Get joint angles from the robot limb.

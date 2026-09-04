@@ -8,11 +8,16 @@
 Limb::Limb(const std::string& limb_name) : name(limb_name) {
   std::string ns = "/robot/limb/" + limb_name + "/";
 
+  joint_names_["left"] = {
+      "left_s0", "left_s1", "left_e0", "left_e1", "left_w0", "left_w1", "left_w2"};
+  joint_names_["right"] = {
+      "right_s0", "right_s1", "right_e0", "right_e1", "right_w0", "right_w1", "right_w2"};
+
   pub_joint_cmd_ = nh_.advertise<baxter_core_msgs::JointCommand>(ns + "joint_command", 1);
   pub_speed_ratio_ = nh_.advertise<std_msgs::Float64>(ns + "set_speed_ratio", 10, true);
   pub_joint_cmd_timeout_ = nh_.advertise<std_msgs::Float64>(ns + "joint_command_timeout", 10, true);
   pub_acceleration_cmd_ =
-      nh_.advertise<baxter_core_msgs::AccelerationCommand>(ns + "acceleration_command", 1, true);
+      nh_.advertise<baxter_core_msgs::AccelerationCommand>(ns + "acceleration_command", 1);
   pub_acceleration_max_cmd_ =
       nh_.advertise<baxter_core_msgs::AccelerationMax>(ns + "acceleration_max_command", 1, true);
   pub_acceleration_min_cmd_ =
@@ -30,11 +35,9 @@ Limb::Limb(const std::string& limb_name) : name(limb_name) {
       nh_.subscribe(ns + "acceleration_min_command", 1, &Limb::onJointAccelerationsMin, this);
   sub_ref_angles_ =
       nh_.subscribe(ns + "referent_joint_angles", 1, &Limb::onJointReferentAngles, this);
+  gravity_compensation_ =
+      nh_.subscribe(ns + "gravity_compensation_torques", 1, &Limb::onGravityCompensation, this);
 
-  joint_names_["left"] = {
-      "left_s0", "left_s1", "left_e0", "left_e1", "left_w0", "left_w1", "left_w2"};
-  joint_names_["right"] = {
-      "right_s0", "right_s1", "right_e0", "right_e1", "right_w0", "right_w1", "right_w2"};
 }
 
 void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr& msg) {
@@ -42,9 +45,15 @@ void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr& msg) {
   for (size_t i = 0; i < msg->name.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->name[i]) !=
         joint_names_[name].end()) {
-      joint_angle_[msg->name[i]] = msg->position[i];
-      joint_velocity_[msg->name[i]] = msg->velocity[i];
-      joint_effort_[msg->name[i]] = msg->effort[i];
+      if (i < msg->position.size()) {
+        joint_angle_[msg->name[i]] = msg->position[i];
+      }
+      if (i < msg->velocity.size()) {
+        joint_velocity_[msg->name[i]] = msg->velocity[i];
+      }
+      if (i < msg->effort.size()) {
+        joint_effort_[msg->name[i]] = msg->effort[i];
+      }
     }
   }
 }
@@ -54,7 +63,9 @@ void Limb::onJointReferentAngles(const baxter_core_msgs::ReferentJointAngles::Co
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
         joint_names_[name].end()) {
-      referent_angles_[msg->joint_names[i]] = msg->angles[i];
+      if (i < msg->angles.size()) {
+        referent_angles_[msg->joint_names[i]] = msg->angles[i];
+      }
     }
   }
 }
@@ -80,13 +91,42 @@ void Limb::onEndpointStates(const baxter_core_msgs::EndpointState::ConstPtr& msg
 
 void Limb::onJointAccelerations(const baxter_core_msgs::AccelerationCommand::ConstPtr& msg) {
   std::lock_guard<std::mutex> lock(mutex_);
-  last_acceleration_ref_stamp_ = ros::Time::now();
+  bool received_acceleration = false;
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
         joint_names_[name].end()) {
-      joint_acceleration_[msg->joint_names[i]] = msg->accelerations[i];
-      joint_velocity_ref_[msg->joint_names[i]] = msg->velocities[i];
-      joint_angle_ref_[msg->joint_names[i]] = msg->angles[i];
+      if (i < msg->accelerations.size()) {
+        joint_acceleration_[msg->joint_names[i]] = msg->accelerations[i];
+        received_acceleration = true;
+      }
+      if (i < msg->velocities.size()) {
+        joint_velocity_ref_[msg->joint_names[i]] = msg->velocities[i];
+      }
+      if (i < msg->angles.size()) {
+        joint_angle_ref_[msg->joint_names[i]] = msg->angles[i];
+      }
+    }
+  }
+  if (received_acceleration) {
+    last_acceleration_ref_stamp_ = ros::Time::now();
+  }
+}
+
+void Limb::onGravityCompensation(const baxter_core_msgs::SEAJointState::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (size_t i = 0; i < msg->name.size(); ++i) {
+    if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->name[i]) ==
+        joint_names_[name].end()) {
+      continue;
+    }
+    if (i < msg->commanded_effort.size()) {
+      commanded_effort_[msg->name[i]] = msg->commanded_effort[i];
+    }
+    if (i < msg->actual_effort.size()) {
+      actual_effort_[msg->name[i]] = msg->actual_effort[i];
+    }
+    if (i < msg->gravity_model_effort.size()) {
+      gravity_model_effort_[msg->name[i]] = msg->gravity_model_effort[i];
     }
   }
 }
@@ -104,7 +144,9 @@ void Limb::onJointAccelerationsMax(const baxter_core_msgs::AccelerationMax::Cons
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
         joint_names_[name].end()) {
-      joint_acceleration_max_[msg->joint_names[i]] = msg->accelerations[i];
+      if (i < msg->accelerations.size()) {
+        joint_acceleration_max_[msg->joint_names[i]] = msg->accelerations[i];
+      }
     }
   }
 }
@@ -114,7 +156,9 @@ void Limb::onJointAccelerationsMin(const baxter_core_msgs::AccelerationMin::Cons
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
         joint_names_[name].end()) {
-      joint_acceleration_min_[msg->joint_names[i]] = msg->accelerations[i];
+      if (i < msg->accelerations.size()) {
+        joint_acceleration_min_[msg->joint_names[i]] = msg->accelerations[i];
+      }
     }
   }
 }
@@ -136,6 +180,11 @@ std::unordered_map<std::string, double> Limb::jointAngles() const {
 std::unordered_map<std::string, double> Limb::jointVelocities() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return joint_velocity_;
+}
+
+std::unordered_map<std::string, double> Limb::jointEfforts() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return joint_effort_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAccelerationsRef() const {
@@ -166,6 +215,21 @@ std::unordered_map<std::string, double> Limb::jointAccelerationsMin() const {
 std::unordered_map<std::string, double> Limb::referentJointAngles() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return referent_angles_;
+}
+
+std::unordered_map<std::string, double> Limb::commandedEffort() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return commanded_effort_;
+}
+
+std::unordered_map<std::string, double> Limb::actualEffort() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return actual_effort_;
+}
+
+std::unordered_map<std::string, double> Limb::gravityModelEffort() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return gravity_model_effort_;
 }
 
 void Limb::setJointPositions(const std::unordered_map<std::string, double>& positions) {
@@ -236,6 +300,11 @@ void Limb::setJointTorques(const std::unordered_map<std::string, double>& torque
     cmd_msg.command.push_back(joint.second);
   }
   pub_joint_cmd_.publish(cmd_msg);
+}
+
+void Limb::exitControlMode(double timeout) {
+  setCommandTimeout(timeout);
+  setJointPositions(jointAngles());
 }
 
 void Limb::moveToNeutral(double timeout) {

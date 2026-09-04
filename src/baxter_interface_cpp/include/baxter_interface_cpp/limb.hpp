@@ -133,6 +133,12 @@ class Limb {
   void setJointTorques(const std::unordered_map<std::string, double>& torques);
 
   /**
+   * @brief Exit velocity or torque control and hold the current joint positions.
+   * @param timeout Joint-command timeout to configure before changing modes.
+   */
+  void exitControlMode(double timeout = 0.2);
+
+  /**
    * @brief Move the limb to its neutral position.
    * @param timeout Time (in seconds) to allow the limb to reach the neutral
    * position.
@@ -172,7 +178,6 @@ class Limb {
   void setJointAccelerationsMax(const std::unordered_map<std::string, double>& accelerations);
 
   void setJointAccelerationsMin(const std::unordered_map<std::string, double>& accelerations);
-  void onGravityCompenstation(const baxter_core_msgs::SEAJointState::ConstPtr& msg);
   std::unordered_map<std::string, double> jointVelocitiesRef() const;
   std::unordered_map<std::string, double> jointAnglesRef() const;
   std::unordered_map<std::string, double> referentJointAngles() const;
@@ -241,4 +246,5 @@ class Limb {
 
   void onJointAccelerationsMin(const baxter_core_msgs::AccelerationMin::ConstPtr& msg);
   void onJointReferentAngles(const baxter_core_msgs::ReferentJointAngles::ConstPtr& msg);
+  void onGravityCompensation(const baxter_core_msgs::SEAJointState::ConstPtr& msg);
 };

@@ -63,8 +63,13 @@ void MPCControlManager::processControl(const std::vector<double>& x_ref) {
 
   updateLinearizedZConstraint(x0_vals);
 
-  // Solve MPC
-  casadi::DM optimal_a = mpc_.solve(x0, v0, x_ref_val);
+  casadi::DM optimal_a;
+  try {
+    optimal_a = mpc_.solve(x0, v0, x_ref_val, casadi::DM(previous_applied_accelerations_));
+  } catch (const std::exception& ex) {
+    ROS_ERROR_THROTTLE(1.0, "MPC solve failed; suppressing command: %s", ex.what());
+    return;
+  }
 
   // Extract the first step's accelerations
   int num_state_vars = kPredictionHorizon * 2 * kNumJoints;
@@ -80,6 +85,10 @@ void MPCControlManager::processControl(const std::vector<double>& x_ref) {
 
   // // Command the limb
   limb_->setJointAccelerations(referent_accelerations, referent_velocities, referent_angles);
+  previous_applied_accelerations_.clear();
+  for (const auto& joint_name : limb_->jointNames()) {
+    previous_applied_accelerations_.push_back(referent_accelerations.at(joint_name));
+  }
 }
 
 void MPCControlManager::run() {

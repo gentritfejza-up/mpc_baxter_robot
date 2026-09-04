@@ -54,10 +54,8 @@ class MPCController {
    * joint velocities.
    * @param reference_positions A DM of size (num_joints_, 1) with the desired
    * final positions.
-   * @param max_accelerations   A DM of size (num_joints_, 1) with the max
-   * acceleration allowed for each joint.
-   * @param min_accelerations   A DM of size (num_joints_, 1) with the min
-   * acceleration allowed for each joint.
+   * @param previous_accelerations A DM containing the accelerations applied in
+   * the previous control cycle.
    * @return The raw CasADi DM solution vector containing [total_time,
    * a_0...a_{N-1}].
    *
@@ -66,7 +64,8 @@ class MPCController {
    * simulates the trajectory steps in console output.
    */
   casadi::DM solve(const casadi::DM& initial_positions, const casadi::DM& initial_velocities,
-                   const casadi::DM& reference_positions);
+                   const casadi::DM& reference_positions,
+                   const casadi::DM& previous_accelerations);
 
   /**
    * @brief Update linearized end-effector z-floor constraint used in MPC.
@@ -153,13 +152,13 @@ class MPCController {
    * @param positions            DM for initial positions.
    * @param velocities           DM for initial velocities.
    * @param reference_positions  DM for reference positions.
-   * @param max_accelerations    DM for max accelerations per joint.
-   * @param min_accelerations    DM for min accelerations per joint.
+   * @param previous_accelerations DM for accelerations applied in the prior cycle.
    *
-   * Logs an error if any dimension does not match num_joints_.
+   * @throws std::invalid_argument if any dimension does not match num_joints_.
    */
   void validateInputs(const casadi::DM& positions, const casadi::DM& velocities,
-                      const casadi::DM& reference_positions) const;
+                      const casadi::DM& reference_positions,
+                      const casadi::DM& previous_accelerations) const;
 
   /**
    * @brief Build the symbolic NLP (decision variables, constraints, cost).
@@ -190,18 +189,14 @@ class MPCController {
    * @param positions            The current joint positions.
    * @param velocities           The current joint velocities.
    * @param reference_positions  The desired final positions.
-   * @param max_accelerations    The max acceleration for each joint.
-   * @param min_accelerations    The min acceleration for each joint.
-   * @param q_weights            Currently unused, but can be integrated into
-   * cost if desired.
-   * @param r_weights            Currently unused, but can be integrated into
-   * cost if desired.
+   * @param previous_accelerations Accelerations applied in the prior cycle.
    * @return A std::map<std::string, casadi::DM> containing x0, lbx, ubx, p,
    * lbg, ubg.
    */
   std::map<std::string, casadi::DM> prepareSolverArguments(const casadi::DM& positions,
                                                            const casadi::DM& velocities,
-                                                           const casadi::DM& reference_positions);
+                                                           const casadi::DM& reference_positions,
+                                                           const casadi::DM& previous_accelerations);
 
   int num_joints_;
   int prediction_horizon_;
@@ -219,7 +214,7 @@ class MPCController {
   casadi::MX positions_;
   casadi::MX velocities_;
   casadi::MX reference_positions_;
-  casadi::DM init_accelerations_{0, 0, 0, 0, 0, 0, 0};
+  casadi::MX previous_accelerations_;
   std::vector<casadi::MX> decision_variables_;
   std::vector<casadi::MX> constraints_;
 

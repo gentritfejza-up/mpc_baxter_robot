@@ -142,6 +142,7 @@ void MPCController::initializeVariables() {
   positions_ = casadi::MX::sym("positions", num_joints_);
   velocities_ = casadi::MX::sym("velocities", num_joints_);
   reference_positions_ = casadi::MX::sym("reference_positions", num_joints_);
+  previous_accelerations_ = casadi::MX::sym("previous_accelerations", num_joints_);
 }
 
 //-------------------------------------------------------------------
@@ -183,7 +184,7 @@ void MPCController::initializeBoundsTimeScaling() {
   }
 
   int numConstraints = (6 * prediction_horizon_ * num_joints_) +
-                       (2 * (control_horizon_ - 1) * num_joints_) + (2 * num_joints_ + 1) +
+                       (2 * control_horizon_ * num_joints_) + (2 * num_joints_ + 1) +
                        ee_z_constraint_steps_;
   lbg_ = casadi::DM::zeros(numConstraints);
   ubg_ = casadi::DM::inf(numConstraints);
@@ -195,7 +196,8 @@ void MPCController::initializeBoundsTimeScaling() {
   }
 
   int posEqStart =
-      (6 * prediction_horizon_ * num_joints_) + (2 * (control_horizon_ - 1) * num_joints_);
+      (6 * prediction_horizon_ * num_joints_) + (2 * control_horizon_ * num_joints_) +
+      ee_z_constraint_steps_;
   int posEqEnd = posEqStart + (2 * num_joints_);
   for (int i = posEqStart; i < posEqEnd; ++i) { ubg_(i) = 0.0; }
 
@@ -224,7 +226,7 @@ void MPCController::initializeBoundsQuadraticCost() {
   }
 
   int numConstraints = (6 * prediction_horizon_ * num_joints_) +
-                       (2 * (control_horizon_ - 1) * num_joints_) + ee_z_constraint_steps_;
+                       (2 * control_horizon_ * num_joints_) + ee_z_constraint_steps_;
   lbg_ = casadi::DM::zeros(numConstraints);
   ubg_ = casadi::DM::inf(numConstraints);
 
@@ -261,12 +263,12 @@ void MPCController::setDefaultConstraints() {
 }
 
 void MPCController::validateInputs(const casadi::DM& positions, const casadi::DM& velocities,
-                                   const casadi::DM& reference_positions) const {
+                                   const casadi::DM& reference_positions,
+                                   const casadi::DM& previous_accelerations) const {
   if (positions.size1() != num_joints_ || velocities.size1() != num_joints_ ||
-      reference_positions.size1() != num_joints_) {
-    ROS_ERROR_STREAM("Input dimensions must match the number of joints: "
-                     << reference_positions.size1() << "," << positions.size1() << ", "
-                     << velocities.size1());
+      reference_positions.size1() != num_joints_ ||
+      previous_accelerations.size1() != num_joints_) {
+    throw std::invalid_argument("MPC input dimensions must match the number of joints");
   }
 }
 
@@ -339,6 +341,13 @@ void MPCController::buildNlpTimeScaling() {
     }
   }
 
+  for (int j = 0; j < num_joints_; ++j) {
+    const casadi::MX initial_jerk =
+        (A_vec[0](j) - previous_accelerations_(j)) / (d_tau * T);
+    constraints_.push_back(initial_jerk - jerk_min_[j]);
+    constraints_.push_back(jerk_max_[j] - initial_jerk);
+  }
+
   for (int k = 0; k < control_horizon_ - 1; ++k) {
     for (int j = 0; j < num_joints_; ++j) {
       constraints_.push_back(((A_vec[k + 1](j) - A_vec[k](j)) / (d_tau * T)) - jerk_min_[j]);
@@ -361,8 +370,8 @@ void MPCController::buildNlpTimeScaling() {
           {"g", casadi::MX::vertcat(constraints_)},
         {"p",
          casadi::MX::vertcat(
-           {positions_, velocities_, reference_positions_, q_vector, r_vector, ee_jz_vector,
-          ee_z_offset, ee_z_gate})}};
+           {positions_, velocities_, reference_positions_, previous_accelerations_, q_vector,
+            r_vector, ee_jz_vector, ee_z_offset, ee_z_gate})}};
 }
 
 void MPCController::buildNlpQuadraticCost() {
@@ -423,6 +432,13 @@ void MPCController::buildNlpQuadraticCost() {
     }
   }
 
+  for (int j = 0; j < num_joints_; ++j) {
+    const casadi::MX initial_jerk =
+        (A_vec[0](j) - previous_accelerations_(j)) / sampling_time_;
+    constraints_.push_back(initial_jerk - jerk_min_[j]);
+    constraints_.push_back(jerk_max_[j] - initial_jerk);
+  }
+
   for (int k = 0; k < control_horizon_ - 1; ++k) {
     for (int j = 0; j < num_joints_; ++j) {
       constraints_.push_back(((A_vec[k + 1](j) - A_vec[k](j)) / sampling_time_) - jerk_min_[j]);
@@ -440,8 +456,8 @@ void MPCController::buildNlpQuadraticCost() {
           {"g", casadi::MX::vertcat(constraints_)},
         {"p",
          casadi::MX::vertcat(
-           {positions_, velocities_, reference_positions_, q_vector, r_vector, ee_jz_vector,
-          ee_z_offset, ee_z_gate})}};
+           {positions_, velocities_, reference_positions_, previous_accelerations_, q_vector,
+            r_vector, ee_jz_vector, ee_z_offset, ee_z_gate})}};
 }
 
 // ----------------------------------------------------------------------------
@@ -459,7 +475,7 @@ void MPCController::createSolver() {
 
 std::map<std::string, casadi::DM> MPCController::prepareSolverArguments(
     const casadi::DM& positions, const casadi::DM& velocities,
-    const casadi::DM& reference_positions) {
+    const casadi::DM& reference_positions, const casadi::DM& previous_accelerations) {
   std::map<std::string, casadi::DM> args;
   args["x0"] = x_init_;
   args["lbx"] = lbx_;
@@ -472,22 +488,24 @@ std::map<std::string, casadi::DM> MPCController::prepareSolverArguments(
     r_weights = acceleration_weights_vector_;
   }
   args["p"] = casadi::DM::vertcat(
-      {positions, velocities, reference_positions, q_weights, r_weights,
+      {positions, velocities, reference_positions, previous_accelerations, q_weights, r_weights,
        ee_z_jacobian_row_, casadi::DM(ee_z_offset_), casadi::DM(ee_z_gate_)});
   args["lbg"] = lbg_;
   args["ubg"] = ubg_;
-  init_accelerations_.clear();
 
   return args;
 }
 
 casadi::DM MPCController::solve(const casadi::DM& initial_positions,
                                 const casadi::DM& initial_velocities,
-                                const casadi::DM& reference_positions) {
-  validateInputs(initial_positions, initial_velocities, reference_positions);
+                                const casadi::DM& reference_positions,
+                                const casadi::DM& previous_accelerations) {
+  validateInputs(initial_positions, initial_velocities, reference_positions,
+                 previous_accelerations);
 
   std::map<std::string, casadi::DM> solver_args =
-      prepareSolverArguments(initial_positions, initial_velocities, reference_positions);
+      prepareSolverArguments(initial_positions, initial_velocities, reference_positions,
+                             previous_accelerations);
 
   auto result = solver_(solver_args);
   
@@ -497,8 +515,7 @@ casadi::DM MPCController::solve(const casadi::DM& initial_positions,
   oss << stats.at("return_status");
   const std::string return_status = oss.str();
   if (return_status != "Solve_Succeeded" && return_status != "Solved_To_Acceptable_Level") {
-    ROS_WARN_STREAM("MPC solver return_status: " << return_status
-                    << ". Solution may not be optimal.");
+    throw std::runtime_error("MPC solver failed with return_status: " + return_status);
   }
   
   casadi::DM optimal_solution = result["x"];
@@ -511,7 +528,6 @@ casadi::DM MPCController::solve(const casadi::DM& initial_positions,
     int end_index = start_index + num_joints_;
     casadi::DM acceleration_value = optimal_solution(casadi::Slice(start_index, end_index));
     accelerations.push_back(acceleration_value);
-    if (k == 0) { init_accelerations_ = acceleration_value; }
   }
 
   if (solver_mode_ == SolverMode::TimeScaling) {

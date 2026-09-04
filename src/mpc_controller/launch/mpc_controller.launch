@@ -1,0 +1,12 @@
+<launch>
+  <arg name="limb" default="left" doc="Which limb to control: left or right" />
+
+  <rosparam command="load"
+            file="$(find mpc_controller)/config/config.yaml" />
+
+  <node name="mpc_controller_node_$(arg limb)"
+        pkg="mpc_controller"
+        type="run_mpc"
+        output="screen"
+        args="$(arg limb)" />
+</launch>

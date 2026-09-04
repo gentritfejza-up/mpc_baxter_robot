@@ -48,6 +48,15 @@ RUN apt-get update && apt-get install -y \
     swig \
     ros-noetic-effort-controllers \
     ros-noetic-kdl-parser \
+    ros-noetic-gazebo-ros-pkgs \
+    ros-noetic-gazebo-ros-control \
+    ros-noetic-ros-control \
+    ros-noetic-ros-controllers \
+    ros-noetic-cv-bridge \
+    ros-noetic-image-transport \
+    ros-noetic-tf \
+    ros-noetic-tf-conversions \
+    ros-noetic-cmake-modules \
     python3-yaml \
     python2 \
     python-is-python2 \
@@ -61,6 +70,21 @@ RUN apt-get update && apt-get install -y \
     mesa-utils \
     zstd \
     && rm -rf /var/lib/apt/lists/*
+
+# --- CasADi from source (pinned version) ---
+RUN git clone --depth 1 --branch 3.7.2 \
+    https://github.com/casadi/casadi.git /opt/casadi-src && \
+    cd /opt/casadi-src && mkdir build && cd build && \
+    cmake \
+      -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DWITH_PYTHON=ON \
+      -DWITH_IPOPT=ON \
+      -DWITH_OPENMP=ON \
+      -DWITH_THREAD=ON \
+      .. && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /opt/casadi-src
 
 RUN groupadd --gid ${GID} ${USERNAME} && \
     useradd --uid ${UID} --gid ${GID} --create-home --shell /bin/bash ${USERNAME} && \

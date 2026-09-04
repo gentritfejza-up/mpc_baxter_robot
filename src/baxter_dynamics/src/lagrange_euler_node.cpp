@@ -11,6 +11,14 @@ LagrangeEulerNode::LagrangeEulerNode(ros::NodeHandle &nh,
   nh.param("robot/control/lagrange_euler_rate_hz", loop_rate_hz_, 800);
   nh.param("robot/control/acceleration_ref_timeout_sec",
            acceleration_ref_timeout_sec_, 0.2);
+  limb_->setCommandTimeout(acceleration_ref_timeout_sec_);
+}
+
+void LagrangeEulerNode::exitTorqueControl() {
+  if (torque_control_active_) {
+    limb_->exitControlMode(acceleration_ref_timeout_sec_);
+    torque_control_active_ = false;
+  }
 }
 
 void LagrangeEulerNode::processComputedTorque() {
@@ -23,11 +31,13 @@ void LagrangeEulerNode::processComputedTorque() {
     ROS_WARN_THROTTLE(
         1,
         "Joint states or MPC acceleration references are not yet available.");
+    exitTorqueControl();
     return;
   }
 
   if (limb_->accelerationRefAgeSec() > acceleration_ref_timeout_sec_) {
-    ROS_WARN_THROTTLE(1, "Acceleration references are stale; skipping torque command.");
+    ROS_WARN_THROTTLE(1, "Acceleration references are stale; exiting torque control.");
+    exitTorqueControl();
     return;
   }
 
@@ -35,8 +45,10 @@ void LagrangeEulerNode::processComputedTorque() {
     auto tau = lagrange_euler_->Torque_calc(joint_angles_, joint_velocities_,
                                             joint_accelerations_);
     limb_->setJointTorques(tau);
+    torque_control_active_ = true;
   } catch (const std::exception &exception) {
     ROS_ERROR_THROTTLE(1, "Torque calculation failed: %s", exception.what());
+    exitTorqueControl();
   }
 }
 
@@ -49,4 +61,5 @@ void LagrangeEulerNode::runNode() {
     processComputedTorque();
     rate.sleep();
   }
+  exitTorqueControl();
 }

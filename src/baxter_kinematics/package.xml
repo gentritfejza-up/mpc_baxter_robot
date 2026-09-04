@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>baxter_kinematics</name>
+  <version>0.1.0</version>
+  <description>KDL-based kinematics (FK, IK, Jacobian) and IK service client for Baxter robot</description>
+  <maintainer email="gentritfejza@gmail.com">Gentrit Fejza</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>baxter_core_msgs</depend>
+  <depend>baxter_interface_cpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>kdl_parser</depend>
+  <depend>orocos_kdl</depend>
+  <depend>roscpp</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>urdf</depend>
+
+  <export>
+  </export>
+</package>

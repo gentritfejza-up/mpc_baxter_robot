@@ -12,8 +12,8 @@ MPCController::MPCController(ros::NodeHandle& nh, int num_joints, int prediction
       sampling_time_(sampling_time),
       position_weights_vector_(num_joints, 0.0),
       acceleration_weights_vector_(num_joints, 0.0),
-      ee_z_jacobian_row_(casadi::DM::zeros(num_joints, 1)),
-      x_ref_(num_joints, 0.0) {
+      x_ref_(num_joints, 0.0),
+      ee_z_jacobian_row_(casadi::DM::zeros(num_joints, 1)) {
   std::vector<double> jerk_min, jerk_max, acceleration_min, acceleration_max;
   if (nh.getParam("robot/jerk_max", jerk_max) && nh.getParam("robot/jerk_min", jerk_min) &&
       nh.getParam("robot/acceleration_max", acceleration_max) &&
@@ -57,6 +57,7 @@ MPCController::MPCController(ros::NodeHandle& nh, int num_joints, int prediction
 // ----------------------------------------------------------------------------
 void MPCController::dynamicReconfigureCallback(mpc_controller::MpcParametersConfig& config,
                                                uint32_t level) {
+  std::lock_guard<std::mutex> lock(config_mutex_);
   position_weights_vector_[0] = config.pos_weight_0;
   position_weights_vector_[1] = config.pos_weight_1;
   position_weights_vector_[2] = config.pos_weight_2;
@@ -82,6 +83,11 @@ void MPCController::dynamicReconfigureCallback(mpc_controller::MpcParametersConf
   x_ref_[6] = config.ref_6;
 
   ROS_INFO("Dynamic Reconfigure: Updated weights and reference positions.");
+}
+
+std::vector<double> MPCController::getReferencePositions() const {
+  std::lock_guard<std::mutex> lock(config_mutex_);
+  return x_ref_;
 }
 
 // ----------------------------------------------------------------------------
@@ -458,8 +464,13 @@ std::map<std::string, casadi::DM> MPCController::prepareSolverArguments(
   args["x0"] = x_init_;
   args["lbx"] = lbx_;
   args["ubx"] = ubx_;
-  casadi::DM q_weights = position_weights_vector_;
-  casadi::DM r_weights = acceleration_weights_vector_;
+  casadi::DM q_weights;
+  casadi::DM r_weights;
+  {
+    std::lock_guard<std::mutex> lock(config_mutex_);
+    q_weights = position_weights_vector_;
+    r_weights = acceleration_weights_vector_;
+  }
   args["p"] = casadi::DM::vertcat(
       {positions, velocities, reference_positions, q_weights, r_weights,
        ee_z_jacobian_row_, casadi::DM(ee_z_offset_), casadi::DM(ee_z_gate_)});

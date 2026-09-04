@@ -4,6 +4,7 @@
 #include <urdf/model.h>
 #include <kdl_parser/kdl_parser.hpp>
 #include <limits>
+#include <stdexcept>
 
 BaxterKinematicsInterface::BaxterKinematicsInterface(const std::string& base_link,
                                                      const std::string& end_link) {

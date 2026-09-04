@@ -12,6 +12,7 @@
 #include <std_msgs/Float64.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>

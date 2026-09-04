@@ -1,4 +1,6 @@
 #include "baxter_interface_cpp/limb.hpp"
+
+#include <algorithm>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -36,6 +38,7 @@ Limb::Limb(const std::string& limb_name) : name(limb_name) {
 }
 
 void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
   for (size_t i = 0; i < msg->name.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->name[i]) !=
         joint_names_[name].end()) {
@@ -47,6 +50,7 @@ void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr& msg) {
 }
 
 void Limb::onJointReferentAngles(const baxter_core_msgs::ReferentJointAngles::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
         joint_names_[name].end()) {
@@ -56,6 +60,7 @@ void Limb::onJointReferentAngles(const baxter_core_msgs::ReferentJointAngles::Co
 }
 
 void Limb::onEndpointStates(const baxter_core_msgs::EndpointState::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
   cartesian_pose_["position"] =
       Point{msg->pose.position.x, msg->pose.position.y, msg->pose.position.z};
   cartesian_orientation_["orientation"] = Quaternion{msg->pose.orientation.x,
@@ -74,6 +79,7 @@ void Limb::onEndpointStates(const baxter_core_msgs::EndpointState::ConstPtr& msg
 }
 
 void Limb::onJointAccelerations(const baxter_core_msgs::AccelerationCommand::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
   last_acceleration_ref_stamp_ = ros::Time::now();
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
@@ -86,6 +92,7 @@ void Limb::onJointAccelerations(const baxter_core_msgs::AccelerationCommand::Con
 }
 
 double Limb::accelerationRefAgeSec() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   if (last_acceleration_ref_stamp_.isZero()) {
     return std::numeric_limits<double>::max();
   }
@@ -93,6 +100,7 @@ double Limb::accelerationRefAgeSec() const {
 }
 
 void Limb::onJointAccelerationsMax(const baxter_core_msgs::AccelerationMax::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
         joint_names_[name].end()) {
@@ -102,6 +110,7 @@ void Limb::onJointAccelerationsMax(const baxter_core_msgs::AccelerationMax::Cons
 }
 
 void Limb::onJointAccelerationsMin(const baxter_core_msgs::AccelerationMin::ConstPtr& msg) {
+  std::lock_guard<std::mutex> lock(mutex_);
   for (size_t i = 0; i < msg->joint_names.size(); ++i) {
     if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
         joint_names_[name].end()) {
@@ -115,6 +124,7 @@ std::vector<std::string> Limb::jointNames() const {
 }
 
 double Limb::jointAngle(const std::string& joint) const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return joint_angle_.at(joint);
 }
 
@@ -124,30 +134,37 @@ std::unordered_map<std::string, double> Limb::jointAngles() const {
 }
 
 std::unordered_map<std::string, double> Limb::jointVelocities() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return joint_velocity_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAccelerationsRef() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return joint_acceleration_;
 }
 
 std::unordered_map<std::string, double> Limb::jointVelocitiesRef() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return joint_velocity_ref_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAnglesRef() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return joint_angle_ref_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAccelerationsMax() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return joint_acceleration_max_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAccelerationsMin() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return joint_acceleration_min_;
 }
 
 std::unordered_map<std::string, double> Limb::referentJointAngles() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return referent_angles_;
 }
 
@@ -222,27 +239,27 @@ void Limb::setJointTorques(const std::unordered_map<std::string, double>& torque
 }
 
 void Limb::moveToNeutral(double timeout) {
-  std::unordered_map<std::string, double> neutral_positions = {{"left_s0", 0.0},
-                                                               {"left_s1", -0.55},
-                                                               {"left_e0", 0.0},
-                                                               {"left_e1", 0.75},
-                                                               {"left_w0", 0.0},
-                                                               {"left_w1", 1.26},
-                                                               {"left_w2", 0.0}};
+  const std::unordered_map<std::string, double> neutral_positions = {
+      {name + "_s0", 0.0},  {name + "_s1", -0.55}, {name + "_e0", 0.0},
+      {name + "_e1", 0.75}, {name + "_w0", 0.0},   {name + "_w1", 1.26},
+      {name + "_w2", 0.0}};
 
   setJointPositions(neutral_positions);
   ros::Duration(timeout).sleep();
 }
 
 std::unordered_map<std::string, Point> Limb::endpointPose() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return cartesian_pose_;
 }
 
 std::unordered_map<std::string, Point> Limb::endpointVelocity() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return cartesian_velocity_;
 }
 
 std::unordered_map<std::string, Point> Limb::endpointEffort() const {
+  std::lock_guard<std::mutex> lock(mutex_);
   return cartesian_effort_;
 }
 

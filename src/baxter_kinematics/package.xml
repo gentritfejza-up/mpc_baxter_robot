@@ -11,6 +11,7 @@
   <depend>baxter_interface_cpp</depend>
   <depend>geometry_msgs</depend>
   <depend>kdl_parser</depend>
+  <depend>orocos_kdl</depend>
   <depend>roscpp</depend>
   <depend>std_msgs</depend>
   <depend>tf2</depend>

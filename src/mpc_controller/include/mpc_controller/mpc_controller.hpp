@@ -2,6 +2,7 @@
 
 #include <ros/ros.h>
 #include <casadi/casadi.hpp>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -128,9 +129,9 @@ class MPCController {
   casadi::DM getReferentVelocities() const;
 
   /**
-   * @brief Reference configuration (target joint angles) managed by dynamic reconfigure.
+   * @brief Get a thread-safe snapshot of the dynamic-reconfigure reference positions.
    */
-  std::vector<double> x_ref_;
+  std::vector<double> getReferencePositions() const;
 
  private:
   /**
@@ -228,6 +229,8 @@ class MPCController {
   std::vector<double> velocity_upper_bounds_;
   std::vector<double> position_weights_vector_{0, 0, 0, 0, 0, 0, 0};
   std::vector<double> acceleration_weights_vector_{0, 0, 0, 0, 0, 0, 0};
+  std::vector<double> x_ref_;
+  mutable std::mutex config_mutex_;
   std::vector<double> acceleration_max_;
   std::vector<double> acceleration_min_;
   std::vector<double> jerk_min_;

@@ -43,10 +43,16 @@ void MPCControlManager::processControl(const std::vector<double>& x_ref) {
   x0_vals.reserve(kNumJoints);
   v0_vals.reserve(kNumJoints);
 
-  // Fill current joint positions and velocitiesS
+  // Fill current joint positions and velocities
   for (const auto& joint_name : limb_->jointNames()) {
-    x0_vals.push_back(joint_angles.at(joint_name));
-    v0_vals.push_back(joint_velocities.at(joint_name));
+    const auto angle_it = joint_angles.find(joint_name);
+    const auto velocity_it = joint_velocities.find(joint_name);
+    if (angle_it == joint_angles.end() || velocity_it == joint_velocities.end()) {
+      ROS_WARN_THROTTLE(1.0, "Missing joint state for %s", joint_name.c_str());
+      return;
+    }
+    x0_vals.push_back(angle_it->second);
+    v0_vals.push_back(velocity_it->second);
   }
 
   // Convert to CasADi DM
@@ -83,7 +89,7 @@ void MPCControlManager::run() {
 
   while (ros::ok()) {
     auto t_start = std::chrono::steady_clock::now();
-    processControl(mpc_.x_ref_);
+    processControl(mpc_.getReferencePositions());
     auto t_end = std::chrono::steady_clock::now();
     double ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
     ROS_INFO_THROTTLE(2, "MPC cycle: %.2f ms", ms);

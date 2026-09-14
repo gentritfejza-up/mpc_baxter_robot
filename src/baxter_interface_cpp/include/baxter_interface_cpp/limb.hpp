@@ -31,6 +31,12 @@ struct Quaternion {
   double x, y, z, w;
 };
 
+struct JointStateSnapshot {
+  std::unordered_map<std::string, double> positions;
+  std::unordered_map<std::string, double> velocities;
+  ros::WallTime received_at;
+};
+
 /**
  * @brief Class to represent and control a limb (left or right) of the Baxter
  * robot.
@@ -72,6 +78,8 @@ class Limb {
    * second).
    */
   std::unordered_map<std::string, double> jointVelocities() const;
+
+  JointStateSnapshot jointStateSnapshot() const;
 
   /**
    * @brief Get the current efforts (torques) for all joints in the limb.
@@ -220,6 +228,7 @@ class Limb {
   std::unordered_map<std::string, Point> cartesian_effort_;
   mutable std::mutex mutex_;
   ros::Time last_acceleration_ref_stamp_;
+  ros::WallTime last_joint_state_received_at_;
 
   std::unordered_map<std::string, std::vector<std::string>> joint_names_;
   std::string name;

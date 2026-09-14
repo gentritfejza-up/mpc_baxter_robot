@@ -4,6 +4,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG USERNAME=robot
 ARG UID=1000
 ARG GID=1000
+ARG CASADI_VERSION=3.8.0
 
 RUN apt-get update && apt-get install -y \
     locales fontconfig \
@@ -43,8 +44,11 @@ RUN rosdep init || true
 
 RUN apt-get update && apt-get install -y \
     libeigen3-dev \
+    libblas-dev \
+    liblapack-dev \
     coinor-libipopt-dev \
     gfortran \
+    python3-dev \
     swig \
     ros-noetic-effort-controllers \
     ros-noetic-kdl-parser \
@@ -71,19 +75,28 @@ RUN apt-get update && apt-get install -y \
     zstd \
     && rm -rf /var/lib/apt/lists/*
 
-# --- CasADi from source (pinned version) ---
-RUN git clone --depth 1 --branch 3.7.2 \
+# --- CasADi from source with the NLP and QP backends used by the MPC ---
+RUN python3 -m pip install --no-cache-dir cmake==3.31.6 && \
+    git clone --depth 1 --branch ${CASADI_VERSION} \
     https://github.com/casadi/casadi.git /opt/casadi-src && \
     cd /opt/casadi-src && mkdir build && cd build && \
     cmake \
+      -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/usr/local \
+      -DPYTHON_EXECUTABLE=/usr/bin/python3 \
       -DWITH_PYTHON=ON \
       -DWITH_IPOPT=ON \
+      -DWITH_OSQP=ON \
+      -DWITH_BUILD_OSQP=ON \
+      -DBUILD_OSQP_VERSION=v1.0.0 \
+      -DWITH_QPOASES=ON \
+      -DWITH_LAPACK=ON \
       -DWITH_OPENMP=ON \
       -DWITH_THREAD=ON \
       .. && \
     make -j$(nproc) && \
     make install && \
+    ldconfig && \
     rm -rf /opt/casadi-src
 
 RUN groupadd --gid ${GID} ${USERNAME} && \

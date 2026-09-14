@@ -4,6 +4,12 @@ version: "3"
 vars:
   COMPOSE_FILE: docker/docker-compose.yml
   SERVICE: dev
+  LIMB: left
+  ROS_SETUP: >-
+    source /opt/ros/noetic/setup.bash &&
+    source /workspace/devel/setup.bash &&
+    export ROS_MASTER_URI=http://localhost:11311 ROS_IP=127.0.0.1 &&
+    unset ROS_HOSTNAME
 
 tasks:
   docker:build:
@@ -32,6 +38,68 @@ tasks:
     desc: Stop the development container
     cmds:
       - docker compose -f {{.COMPOSE_FILE}} down
+
+  run:sim:
+    desc: Start Baxter in Gazebo (leave running in its own terminal)
+    deps: [docker:up]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && exec roslaunch baxter_gazebo baxter_world.launch'
+
+  run:mpc:
+    desc: Start MPC with the current simulated joint positions as its initial target
+    requires:
+      vars:
+        - name: LIMB
+          enum: [left, right]
+    cmds:
+      - |
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}} bash -lc '
+        {{.ROS_SETUP}} &&
+        python3 - "{{.LIMB}}" << "PY"
+        import sys
+        import rospy
+        from sensor_msgs.msg import JointState
+
+        limb = sys.argv[1]
+        rospy.init_node("initialize_mpc_target", anonymous=True)
+        names = [limb + "_" + suffix for suffix in
+                 ["s0", "s1", "e0", "e1", "w0", "w1", "w2"]]
+        for attempt in range(100):
+            msg = rospy.wait_for_message("/robot/joint_states", JointState, timeout=10)
+            positions = dict(zip(msg.name, msg.position))
+            if all(name in positions for name in names):
+                for i, name in enumerate(names):
+                    rospy.set_param("/mpc_controller_node_" + limb + "/ref_" + str(i),
+                                    positions[name])
+                break
+        else:
+            raise RuntimeError("No complete joint state received for " + limb)
+        PY
+        result=$?
+        if [ "$result" -ne 0 ]; then exit "$result"; fi
+        exec roslaunch baxter_mpc_controller mpc_controller.launch limb:={{.LIMB}}
+        '
+
+  run:dynamics:
+    desc: Enable simulated Baxter and start Lagrange-Euler torque control (start MPC first)
+    requires:
+      vars:
+        - name: LIMB
+          enum: [left, right]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && rosrun baxter_tools enable_robot.py -e &&
+        exec roslaunch baxter_dynamics lagrange_euler.launch limb:={{.LIMB}}'
+
+  run:tune:
+    desc: Open the MPC dynamic-reconfigure GUI
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && exec rosrun rqt_reconfigure rqt_reconfigure'
 
   clean:
     desc: Remove catkin build and devel artifacts (forces full rebuild)

@@ -20,7 +20,6 @@ This package implements a discrete-time, finite-horizon MPC for trajectory plann
   - Joint position bounds
   - Joint velocity bounds
   - Acceleration and jerk limits
-  - Optional end-effector z-axis floor constraint (via linearized kinematics)
 
 - **Limb-agnostic**: Can control either left or right arm
 
@@ -29,7 +28,6 @@ This package implements a discrete-time, finite-horizon MPC for trajectory plann
 - ROS (Noetic or compatible)
 - CasADi (C++ interface)
 - IPOPT (nonlinear solver backend)
-- baxter_kinematics (for optional EE constraint)
 - baxter_interface_cpp (for robot control)
 - dynamic_reconfigure (for parameter tuning)
 
@@ -44,11 +42,6 @@ robot:
   acceleration_min: [...]              # Min acceleration per joint [rad/s²]
   jerk_max: [...]                      # Max jerk per joint [rad/s³]
   jerk_min: [...]                      # Min jerk per joint [rad/s³]
-  safety:
-    ee_z_constraint_enabled: false      # Enable EE z-floor constraint
-    ee_z_min_m: -0.20                  # Min z height in meters
-    ee_z_constraint_steps: 8           # Number of steps to enforce constraint
-    ee_base_link: "base"                # Base link for kinematics
 ```
 
 ### Dynamic Reconfigure Parameters
@@ -63,18 +56,18 @@ Via `rqt_reconfigure` or command line:
 
 ### Launch with default (left arm):
 ```bash
-roslaunch mpc_controller mpc_controller.launch
+roslaunch baxter_mpc_controller mpc_controller.launch
 ```
 
 ### Launch with right arm:
 ```bash
-roslaunch mpc_controller mpc_controller.launch limb:=right
+roslaunch baxter_mpc_controller mpc_controller.launch limb:=right
 ```
 
 ### Direct execution:
 ```bash
-rosrun mpc_controller run_mpc left
-rosrun mpc_controller run_mpc right
+rosrun baxter_mpc_controller run_mpc left
+rosrun baxter_mpc_controller run_mpc right
 ```
 
 ### Tune parameters:
@@ -103,16 +96,6 @@ The NLP is formulated as discrete-time dynamics with:
 - **Control Horizon**: 15 steps (acceleration after step 15 is held constant)
 - **Dynamics**: Standard Euler integration
 - **Cost**: Quadratic in position error and control acceleration
-
-### End-Effector Constraint
-
-When enabled, maintains z >= z_min via a linearized Jacobian-based constraint:
-
-```
-z_gate * (J_z * q - z_offset) >= 0
-```
-
-Recomputed every control cycle to track changing linearization point.
 
 ## Performance Optimization
 

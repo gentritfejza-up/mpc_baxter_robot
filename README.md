@@ -10,7 +10,7 @@ ROS Noetic development scaffold for Baxter MPC work with CUDA/NVIDIA GPU support
 - Taskfile commands for common workflows
 - Baxter Lagrange-Euler dynamics package under `src/baxter_dynamics`
 - Minimal `baxter_interface_cpp` limb client for torque command runtime wiring
-- Model Predictive Controller (MPC) package under `src/mpc_controller`
+- Model Predictive Controller (MPC) package under `src/baxter_mpc_controller`
 - Submodule manifest placeholder
 
 ## Quick Start
@@ -30,7 +30,7 @@ task docker:shell
 - `src/baxter_dynamics/config/dynamics_params.yaml` provides the Baxter model and torque limits
 - `src/baxter_dynamics/launch/lagrange_euler.launch` runs the computed-torque node
 - `src/baxter_interface_cpp` provides the C++ limb interface used by the node
-- `src/mpc_controller` contains the Model Predictive Controller for trajectory planning
+- `src/baxter_mpc_controller` contains the Model Predictive Controller for trajectory planning
 - `.gitmodules` records submodule configuration when added
 
 ---
@@ -109,18 +109,18 @@ The MPC controller implements Model Predictive Control for joint-space trajector
 
 #### Launch with default parameters (left arm):
 ```bash
-roslaunch mpc_controller mpc_controller.launch
+roslaunch baxter_mpc_controller mpc_controller.launch
 ```
 
 #### Launch for right arm:
 ```bash
-roslaunch mpc_controller mpc_controller.launch limb:=right
+roslaunch baxter_mpc_controller mpc_controller.launch limb:=right
 ```
 
 #### Direct execution:
 ```bash
-rosrun mpc_controller run_mpc left
-rosrun mpc_controller run_mpc right
+rosrun baxter_mpc_controller run_mpc left
+rosrun baxter_mpc_controller run_mpc right
 ```
 
 #### Parameters (in `config/config.yaml`):
@@ -188,7 +188,7 @@ Reference Configuration:
 #### Example: Real-time Parameter Tuning
 ```bash
 # Terminal 1: Start the MPC controller
-roslaunch mpc_controller mpc_controller.launch limb:=left
+roslaunch baxter_mpc_controller mpc_controller.launch limb:=left
 
 # Terminal 2: Open GUI for tuning
 rqt_reconfigure

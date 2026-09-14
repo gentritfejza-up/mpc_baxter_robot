@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(mpc_controller)
+project(baxter_mpc_controller)
 
 # Enable compiler optimizations and export compile commands for clang tools
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -15,7 +15,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
 
 find_package(dynamic_reconfigure REQUIRED)
 find_package(catkin REQUIRED COMPONENTS
-  baxter_kinematics
   baxter_core_msgs
   baxter_interface_cpp
   roscpp
@@ -29,10 +28,17 @@ generate_dynamic_reconfigure_options(
   cfg/MpcParameters.cfg
 )
 
+catkin_install_python(PROGRAMS
+  scripts/enable_simulated_baxter.py
+  scripts/record_control_diagnostics.py
+  scripts/send_sim_references.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 catkin_package(
  INCLUDE_DIRS include
- LIBRARIES mpc_controller
- CATKIN_DEPENDS baxter_kinematics baxter_core_msgs baxter_interface_cpp roscpp std_msgs dynamic_reconfigure
+ LIBRARIES ${PROJECT_NAME}
+ CATKIN_DEPENDS baxter_core_msgs baxter_interface_cpp roscpp std_msgs dynamic_reconfigure
  DEPENDS casadi
 )
 
@@ -50,6 +56,7 @@ add_library(${PROJECT_NAME}
 )
 
 add_executable(run_mpc src/main.cpp)
+add_executable(mpc_solver_benchmark src/mpc_solver_benchmark.cpp)
 
 target_link_libraries(run_mpc PUBLIC
   baxter_interface_cpp
@@ -57,7 +64,14 @@ target_link_libraries(run_mpc PUBLIC
   ${catkin_LIBRARIES}
 )
 
+target_link_libraries(mpc_solver_benchmark PUBLIC
+  ${PROJECT_NAME}
+  ${catkin_LIBRARIES}
+)
+
 add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(run_mpc ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(mpc_solver_benchmark ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
@@ -76,6 +90,10 @@ install(TARGETS run_mpc
   RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION}
 )
 
+install(TARGETS mpc_solver_benchmark
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
   FILES_MATCHING PATTERN "*.hpp"
@@ -91,4 +109,3 @@ install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
   FILES_MATCHING PATTERN "*.launch"
 )
-

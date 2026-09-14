@@ -1,0 +1,25 @@
+robot:
+  solver_mode: "qc"  # "qc" or "time_scaling"
+  solver_backend: "osqp"  # qc: "osqp", "ipopt", or "qpoases"; time_scaling: "ipopt"
+  solver:
+    feasibility_tolerance: 1.0e-2
+    osqp:
+      eps_abs: 1.0e-2
+      eps_rel: 1.0e-2
+      max_iter: 10000
+      polishing: true
+  control:
+    mpc_rate_hz: 20.0
+    prediction_duration_sec: 0.5
+    prediction_horizon: 30
+    control_horizon: 20
+    mpc_spinner_threads: 10
+    state_timeout_sec: 0.04
+    cycle_deadline_ms: 50.0
+    enforce_cycle_deadline: true
+    enforce_first_step_jerk: false
+  acceleration_max: [2, 5, 2, 5, 10, 10, 10]
+  acceleration_min: [-2, -5, -2, -5, -10, -10, -10]
+
+  jerk_max: [10, 25, 15, 25, 50, 50, 50]
+  jerk_min: [-10, -25, -15, -25, -50, -50, -50]

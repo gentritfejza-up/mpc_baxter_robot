@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>baxter_mpc_controller</name>
+  <version>0.1.0</version>
+  <description>Model Predictive Controller for Baxter joint-space trajectory planning using CasADi QP and NLP solvers</description>
+
+  <maintainer email="gentritfejza@gmail.com">Gentrit Fejza</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>baxter_core_msgs</depend>
+  <depend>baxter_interface_cpp</depend>
+  <depend>roscpp</depend>
+  <depend>std_msgs</depend>
+  <depend>dynamic_reconfigure</depend>
+  <exec_depend>baxter_dynamics</exec_depend>
+  <exec_depend>baxter_gazebo</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+
+  <export>
+  </export>
+</package>

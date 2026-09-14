@@ -1,0 +1,88 @@
+<launch>
+  <arg name="limb" default="left" doc="Which limb to control: left or right" />
+
+  <arg name="paused" default="false" doc="Start Gazebo paused" />
+  <arg name="use_sim_time" default="true" doc="Use the Gazebo clock" />
+  <arg name="gui" default="true" doc="Open the Gazebo client" />
+  <arg name="headless" default="false" doc="Run Gazebo without rendering" />
+  <arg name="debug" default="false" doc="Run Gazebo under gdb" />
+  <arg name="auto_enable" default="true" doc="Enable Baxter after the simulator is ready" />
+  <arg name="send_references" default="true" doc="Send five test poses to the MPC" />
+  <arg name="reference_interval_sec" default="10.0" doc="Seconds between test poses" />
+  <arg name="report_interval_sec" default="1.0" doc="Seconds between tracking reports" />
+  <arg name="repeat_references" default="false" doc="Repeat the test-pose sequence" />
+  <arg name="record_diagnostics" default="true" doc="Write synchronized MPC/KDL diagnostics" />
+  <arg name="diagnostics_file" default="/workspace/baxter_mpc_diagnostics.txt"
+       doc="Output JSON-lines text file" />
+  <arg name="diagnostics_rate_hz" default="20.0" doc="Diagnostics sample rate" />
+
+  <arg name="solver_mode" default="qc" doc="MPC formulation: qc or time_scaling" />
+  <arg name="solver_backend" default="osqp" doc="Solver: osqp, ipopt, or qpoases" />
+  <arg name="dynamics_backend" default="kdl"
+       doc="Inverse dynamics backend: lagrange_euler or kdl" />
+  <arg name="mpc_rate_hz" default="20.0" doc="MPC command update rate" />
+  <arg name="cycle_deadline_ms" default="50.0" doc="Maximum state-to-command latency" />
+  <arg name="sim_s1_torque_max" default="100.0" doc="Simulated s1 positive torque limit in Nm" />
+  <arg name="sim_s1_torque_min" default="-100.0" doc="Simulated s1 negative torque limit in Nm" />
+
+  <include file="$(find baxter_gazebo)/launch/baxter_world.launch">
+    <arg name="paused" value="$(arg paused)" />
+    <arg name="use_sim_time" value="$(arg use_sim_time)" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="headless" value="$(arg headless)" />
+    <arg name="debug" value="$(arg debug)" />
+  </include>
+
+  <include if="$(eval arg('dynamics_backend') == 'lagrange_euler')"
+           file="$(find baxter_dynamics)/launch/lagrange_euler.launch">
+    <arg name="limb" value="$(arg limb)" />
+    <arg name="s1_torque_max" value="$(arg sim_s1_torque_max)" />
+    <arg name="s1_torque_min" value="$(arg sim_s1_torque_min)" />
+  </include>
+
+  <include if="$(eval arg('dynamics_backend') == 'kdl')"
+           file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
+    <arg name="limb" value="$(arg limb)" />
+    <arg name="add_gravity_compensation" value="true" />
+    <arg name="compensate_urdf_damping" value="true" />
+    <arg name="aggregate_tip_subtree_inertia" value="true" />
+    <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
+  </include>
+
+  <include file="$(find baxter_mpc_controller)/launch/mpc_controller.launch">
+    <arg name="limb" value="$(arg limb)" />
+    <arg name="solver_mode" value="$(arg solver_mode)" />
+    <arg name="solver_backend" value="$(arg solver_backend)" />
+    <arg name="mpc_rate_hz" value="$(arg mpc_rate_hz)" />
+    <arg name="cycle_deadline_ms" value="$(arg cycle_deadline_ms)" />
+  </include>
+
+  <node if="$(arg auto_enable)"
+        name="enable_simulated_baxter"
+        pkg="baxter_mpc_controller"
+        type="enable_simulated_baxter.py"
+        output="screen"
+        args="--limb $(arg limb)" />
+
+  <node if="$(arg record_diagnostics)"
+        name="baxter_control_diagnostics_recorder"
+        pkg="baxter_mpc_controller"
+        type="record_control_diagnostics.py"
+        output="screen"
+        args="--limb $(arg limb) --output $(arg diagnostics_file) --rate $(arg diagnostics_rate_hz)" />
+
+  <group if="$(arg send_references)">
+    <node unless="$(arg repeat_references)"
+          name="mpc_sim_reference_sender"
+          pkg="baxter_mpc_controller"
+          type="send_sim_references.py"
+          output="screen"
+          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec)" />
+    <node if="$(arg repeat_references)"
+          name="mpc_sim_reference_sender"
+          pkg="baxter_mpc_controller"
+          type="send_sim_references.py"
+          output="screen"
+          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --repeat" />
+  </group>
+</launch>

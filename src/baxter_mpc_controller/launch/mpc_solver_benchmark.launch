@@ -1,0 +1,21 @@
+<launch>
+  <arg name="solver_backend" default="osqp" />
+  <arg name="solver_mode" default="qc" />
+  <arg name="mpc_rate_hz" default="50.0" />
+  <arg name="iterations" default="10000" />
+  <arg name="warmup_iterations" default="100" />
+
+  <rosparam command="load" file="$(find baxter_mpc_controller)/config/config.yaml" />
+  <param name="robot/solver_mode" value="$(arg solver_mode)" />
+  <param name="robot/solver_backend" value="$(arg solver_backend)" />
+  <param name="robot/control/mpc_rate_hz" value="$(arg mpc_rate_hz)" />
+
+  <node name="mpc_solver_benchmark"
+        pkg="baxter_mpc_controller"
+        type="mpc_solver_benchmark"
+        required="true"
+        output="screen">
+    <param name="iterations" value="$(arg iterations)" />
+    <param name="warmup_iterations" value="$(arg warmup_iterations)" />
+  </node>
+</launch>

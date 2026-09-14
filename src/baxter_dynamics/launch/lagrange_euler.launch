@@ -1,8 +1,12 @@
 <launch>
   <arg name="limb" default="left" doc="Which limb to control: left or right" />
+  <arg name="s1_torque_max" default="50.0" doc="Positive s1 torque limit in Nm" />
+  <arg name="s1_torque_min" default="-50.0" doc="Negative s1 torque limit in Nm" />
 
   <rosparam command="load"
             file="$(find baxter_dynamics)/config/dynamics_params.yaml" />
+  <param name="robot/torque_limits/s1_max" type="double" value="$(arg s1_torque_max)" />
+  <param name="robot/torque_limits/s1_min" type="double" value="$(arg s1_torque_min)" />
 
   <node name="lagrange_euler_node_$(arg limb)"
         pkg="baxter_dynamics"

@@ -54,5 +54,7 @@ robot:
   torque_limits:
     shoulder_elbow_max: 50.0
     shoulder_elbow_min: -50.0
+    s1_max: 50.0
+    s1_min: -50.0
     wrist_max: 20.0
     wrist_min: -20.0

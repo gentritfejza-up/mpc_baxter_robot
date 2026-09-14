@@ -1,0 +1,15 @@
+robot:
+  kdl_dynamics:
+    root_link: "torso"
+    add_gravity_compensation: true
+    compensate_urdf_damping: true
+    aggregate_tip_subtree_inertia: true
+    robot_description_timeout_sec: 10.0
+    s1_torque_limit_override: -1.0
+    kp: [0.0, 0.0, 0.0, 0.0, 20.0, 20.0, 20.0]
+    kd: [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+  control:
+    kdl_dynamics_rate_hz: 800.0
+    kdl_diagnostics_rate_hz: 50.0
+    acceleration_ref_timeout_sec: 0.2
+    spinner_threads: 5

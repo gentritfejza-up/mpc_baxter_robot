@@ -36,8 +36,11 @@ LagrangeEuler::EigenVectorToMap(const Eigen::VectorXd &values,
     const std::string &joint_name = joint_names[i];
     double torque_value = values(i);
 
-    if (joint_name == limb_ + "_s0" || joint_name == limb_ + "_s1" ||
-        joint_name == limb_ + "_e0" || joint_name == limb_ + "_e1") {
+    if (joint_name == limb_ + "_s1") {
+      torque_value = std::max(torque_limit_s1_min_,
+                              std::min(torque_limit_s1_max_, torque_value));
+    } else if (joint_name == limb_ + "_s0" || joint_name == limb_ + "_e0" ||
+               joint_name == limb_ + "_e1") {
       torque_value = std::max(torque_limit_shoulder_elbow_min_,
                               std::min(torque_limit_shoulder_elbow_max_,
                                        torque_value));
@@ -62,6 +65,8 @@ void LagrangeEuler::setTorqueLimits(ros::NodeHandle &nh) {
            torque_limit_shoulder_elbow_max_, 50.0);
   nh.param("robot/torque_limits/shoulder_elbow_min",
            torque_limit_shoulder_elbow_min_, -50.0);
+  nh.param("robot/torque_limits/s1_max", torque_limit_s1_max_, 50.0);
+  nh.param("robot/torque_limits/s1_min", torque_limit_s1_min_, -50.0);
   nh.param("robot/torque_limits/wrist_max", torque_limit_wrist_max_, 20.0);
   nh.param("robot/torque_limits/wrist_min", torque_limit_wrist_min_, -20.0);
 }

@@ -42,6 +42,8 @@ private:
 
   double torque_limit_shoulder_elbow_max_{50.0};
   double torque_limit_shoulder_elbow_min_{-50.0};
+  double torque_limit_s1_max_{50.0};
+  double torque_limit_s1_min_{-50.0};
   double torque_limit_wrist_max_{20.0};
   double torque_limit_wrist_min_{-20.0};
 

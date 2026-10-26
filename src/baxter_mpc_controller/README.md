@@ -17,9 +17,10 @@ This package implements a discrete-time, finite-horizon MPC for trajectory plann
   - Reference joint angles
 
 - **Safety constraints**:
-  - Joint position bounds
-  - Joint velocity bounds
-  - Acceleration and jerk limits
+  - Joint position bounds (soft, slack-penalised)
+  - Joint velocity bounds (soft, slack-penalised)
+  - Acceleration and jerk limits (hard)
+  - Braking fallback command when a solve fails
 
 - **Limb-agnostic**: Can control either left or right arm
 
@@ -85,17 +86,22 @@ rqt_reconfigure  # Then select mpc_controller_node_left or mpc_controller_node_r
 - Useful for time-optimal trajectories
 
 #### Quadratic Cost Mode
-- Fixed sampling time (0.1 s by default)
-- Minimizes weighted tracking error plus regularization
-- Faster computation, more predictable execution time
+- First step = control period (20 ms at 50 Hz), remaining steps spread over the prediction
+  duration (1.5 s)
+- Minimizes weighted tracking error plus acceleration regularization plus a quadratic slack penalty (an L1 slack term makes OSQP stall on large reference jumps)
+- Convex QP, solved by OSQP with warm start in ~2 ms
 
 ### Constraint Formulation
 
-The NLP is formulated as discrete-time dynamics with:
-- **Prediction Horizon**: 20 steps
-- **Control Horizon**: 15 steps (acceleration after step 15 is held constant)
-- **Dynamics**: Standard Euler integration
-- **Cost**: Quadratic in position error and control acceleration
+The problem is formulated as discrete-time double-integrator dynamics with:
+- **Prediction Horizon**: 25 steps over 1.5 s
+- **Control Horizon**: 12 steps (acceleration after step 12 is held constant)
+- **Dynamics**: exact double-integrator update per step
+- **Cost**: quadratic in position error and control acceleration
+- **State bounds**: joint position/velocity limits with one non-negative slack per joint per
+  step, so a measured state outside the limits never makes the QP infeasible
+- **Reference to the torque loop**: the measured state at solve time plus the first
+  acceleration; the torque loop integrates it over the command age
 
 ## Performance Optimization
 
@@ -107,7 +113,7 @@ Typical cycle time: 50-200 ms (solver-dependent)
 
 ## Future Improvements
 
-- [ ] Warm-start with previous solution
+- [x] Warm-start with previous solution
 - [ ] Disturbance observer for model mismatch
 - [ ] Integration with trajectory libraries
 - [ ] Multi-objective optimization (safety weight scheduling)

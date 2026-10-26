@@ -8,20 +8,27 @@
   <arg name="debug" default="false" doc="Run Gazebo under gdb" />
   <arg name="auto_enable" default="true" doc="Enable Baxter after the simulator is ready" />
   <arg name="send_references" default="true" doc="Send five test poses to the MPC" />
-  <arg name="reference_interval_sec" default="10.0" doc="Seconds between test poses" />
+  <arg name="reference_interval_sec" default="6.0" doc="Seconds between test poses" />
   <arg name="report_interval_sec" default="1.0" doc="Seconds between tracking reports" />
   <arg name="repeat_references" default="false" doc="Repeat the test-pose sequence" />
+  <arg name="shutdown_after_references" default="false"
+       doc="Shut the whole launch down when the pose sequence finishes (validation runs)" />
+  <arg name="pose_count" default="100" doc="Number of test poses to send" />
   <arg name="record_diagnostics" default="true" doc="Write synchronized MPC/KDL diagnostics" />
   <arg name="diagnostics_file" default="/workspace/baxter_mpc_diagnostics.txt"
        doc="Output JSON-lines text file" />
   <arg name="diagnostics_rate_hz" default="20.0" doc="Diagnostics sample rate" />
 
   <arg name="solver_mode" default="qc" doc="MPC formulation: qc or time_scaling" />
-  <arg name="solver_backend" default="osqp" doc="Solver: osqp, ipopt, or qpoases" />
+  <arg name="solver_backend" default="osqp" doc="Solver: osqp, qpoases, qrqp, ipqp, or ipopt" />
   <arg name="dynamics_backend" default="kdl"
        doc="Inverse dynamics backend: lagrange_euler or kdl" />
-  <arg name="mpc_rate_hz" default="20.0" doc="MPC command update rate" />
-  <arg name="cycle_deadline_ms" default="50.0" doc="Maximum state-to-command latency" />
+  <arg name="mpc_rate_hz" default="50.0" doc="MPC command update rate" />
+  <arg name="cycle_deadline_ms" default="20.0" doc="Maximum state-to-command latency" />
+  <arg name="inner_pd" default="false"
+       doc="Add the computed-torque PD around the MPC trajectory. Off in Gazebo (the plant is the
+            URDF the model is built from, the MPC re-plans from the measured state at 50 Hz); turn
+            on for the real robot, where the model is approximate." />
   <arg name="sim_s1_torque_max" default="100.0" doc="Simulated s1 positive torque limit in Nm" />
   <arg name="sim_s1_torque_min" default="-100.0" doc="Simulated s1 negative torque limit in Nm" />
 
@@ -48,6 +55,14 @@
     <arg name="aggregate_tip_subtree_inertia" value="true" />
     <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
   </include>
+
+  <!-- Pure feedforward computed torque unless inner_pd is requested (gains from the yaml files). -->
+  <group unless="$(arg inner_pd)">
+    <rosparam param="robot/kdl_dynamics/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/kdl_dynamics/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+  </group>
 
   <include file="$(find baxter_mpc_controller)/launch/mpc_controller.launch">
     <arg name="limb" value="$(arg limb)" />
@@ -77,12 +92,13 @@
           pkg="baxter_mpc_controller"
           type="send_sim_references.py"
           output="screen"
-          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec)" />
+          required="$(arg shutdown_after_references)"
+          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count)" />
     <node if="$(arg repeat_references)"
           name="mpc_sim_reference_sender"
           pkg="baxter_mpc_controller"
           type="send_sim_references.py"
           output="screen"
-          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --repeat" />
+          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --repeat" />
   </group>
 </launch>

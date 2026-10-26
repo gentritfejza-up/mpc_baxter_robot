@@ -58,3 +58,6 @@ Thumbs.db
 
 # Docker and local tooling
 docker-compose.override.yml
+
+# Simulation validation logs
+validation/

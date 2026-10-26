@@ -94,6 +94,23 @@ tasks:
         bash -lc '{{.ROS_SETUP}} && rosrun baxter_tools enable_robot.py -e &&
         exec roslaunch baxter_dynamics lagrange_euler.launch limb:={{.LIMB}}'
 
+  run:validate:
+    desc: Gazebo + KDL torque loop + MPC with N clearance-checked poses, then a tracking summary (GUI=true shows Gazebo on the NVIDIA GPU)
+    vars:
+      POSES: '{{.POSES | default "20"}}'
+      DWELL: '{{.DWELL | default "6.0"}}'
+      GUI: '{{.GUI | default "false"}}'
+      OUT: '{{.OUT | default "/workspace/validation/latest.txt"}}'
+    deps: [docker:up]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && mkdir -p $(dirname {{.OUT}}) &&
+        roslaunch baxter_mpc_controller baxter_mpc.launch
+        gui:={{.GUI}} headless:={{if eq .GUI "true"}}false{{else}}true{{end}} limb:={{.LIMB}} pose_count:={{.POSES}}
+        reference_interval_sec:={{.DWELL}} diagnostics_file:={{.OUT}} shutdown_after_references:=true;
+        rosrun baxter_mpc_controller summarize_control_diagnostics.py {{.OUT}} --per-pose'
+
   run:tune:
     desc: Open the MPC dynamic-reconfigure GUI
     cmds:

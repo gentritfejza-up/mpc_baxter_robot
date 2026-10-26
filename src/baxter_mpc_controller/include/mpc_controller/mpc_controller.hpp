@@ -64,6 +64,7 @@ class MPCController {
   void initializeBoundsQuadraticCost();
   void setDefaultConstraints();
   void validateConfiguration() const;
+  void computeQcLayout();
   void validateInputs(const casadi::DM& positions, const casadi::DM& velocities,
                       const casadi::DM& reference_positions,
                       const casadi::DM& previous_accelerations, double first_jerk_dt) const;
@@ -107,6 +108,40 @@ class MPCController {
   // Velocity penalty as a fraction of the position weight (towards zero velocity):
   // damps the otherwise bang-bang approach and reduces overshoot.
   double velocity_weight_ratio_{0.05};
+
+  // Variable and constraint-row layout of the quadratic-cost QP, filled once by
+  // computeQcLayout() right after validateConfiguration(). Every offset used by
+  // buildNlpQuadraticCost(), initializeBoundsQuadraticCost() and the solution
+  // accessors comes from here, so a block appended to the decision vector or to
+  // the constraint vector only has to be added to this struct.
+  //
+  // Decision vector: X_1,V_1,...,X_N,V_N | a_0..a_{Nc-1} | bound slacks S
+  // Constraint rows: dynamics (== 0) | first-step jerk | jerk transitions |
+  //                  soft bounds (all >= 0)
+  // The state/acceleration prefix is shared with the time-scaling formulation
+  // (which appends only the final time), so xOffset/vOffset/accel_offset are
+  // valid for both modes.
+  struct QcLayout {
+    int num_joints{0};
+    int state_vars{0};
+    int accel_vars{0};
+    int bound_slack_blocks{0};  // number of S blocks: N (per step), 1 (shared) or 0
+    int bound_slack_vars{0};
+    int decision_vars{0};
+    int dyn_rows{0};
+    int first_jerk_rows{0};
+    int jerk_rows{0};
+    int bound_rows{0};
+    int constraint_rows{0};
+    int accel_offset{0};        // variable offsets
+    int bound_slack_offset{0};
+    int first_jerk_row_offset{0};  // constraint-row offsets
+    int jerk_row_offset{0};
+    int bound_row_offset{0};
+    int xOffset(int step) const { return (step - 1) * 2 * num_joints; }  // X_step, step in 1..N
+    int vOffset(int step) const { return xOffset(step) + num_joints; }   // V_step, step in 1..N
+    int aOffset(int step) const { return accel_offset + step * num_joints; }  // a_step, step in 0..Nc-1
+  } layout_;
 
   casadi::DM x_init_;
   casadi::DM lam_x_init_;

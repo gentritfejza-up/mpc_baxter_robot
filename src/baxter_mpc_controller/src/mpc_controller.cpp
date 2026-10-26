@@ -107,6 +107,7 @@ MPCController::MPCController(ros::NodeHandle& nh, int num_joints, int prediction
   }
   setDefaultConstraints();
   validateConfiguration();
+  computeQcLayout();
   initializeVariables();
   buildNLP();
   initializeSolverBounds();
@@ -162,6 +163,28 @@ void MPCController::validateConfiguration() const {
       (soft_state_bounds_ && slack_linear_weight_ + slack_quadratic_weight_ <= 0.0)) {
     throw std::invalid_argument("Slack weights must be finite, nonnegative and not both zero");
   }
+}
+
+void MPCController::computeQcLayout() {
+  QcLayout layout;
+  layout.num_joints = num_joints_;
+  layout.state_vars = prediction_horizon_ * 2 * num_joints_;
+  layout.accel_vars = control_horizon_ * num_joints_;
+  layout.bound_slack_blocks = soft_state_bounds_ ? (slack_per_step_ ? prediction_horizon_ : 1) : 0;
+  layout.bound_slack_vars = layout.bound_slack_blocks * 2 * num_joints_;
+  layout.accel_offset = layout.state_vars;
+  layout.bound_slack_offset = layout.accel_offset + layout.accel_vars;
+  layout.decision_vars = layout.bound_slack_offset + layout.bound_slack_vars;
+
+  layout.dyn_rows = 2 * prediction_horizon_ * num_joints_;
+  layout.first_jerk_rows = enforce_first_step_jerk_ ? 2 * num_joints_ : 0;
+  layout.jerk_rows = 2 * (control_horizon_ - 1) * num_joints_;
+  layout.bound_rows = soft_state_bounds_ ? 4 * prediction_horizon_ * num_joints_ : 0;
+  layout.first_jerk_row_offset = layout.dyn_rows;
+  layout.jerk_row_offset = layout.first_jerk_row_offset + layout.first_jerk_rows;
+  layout.bound_row_offset = layout.jerk_row_offset + layout.jerk_rows;
+  layout.constraint_rows = layout.bound_row_offset + layout.bound_rows;
+  layout_ = layout;
 }
 
 void MPCController::dynamicReconfigureCallback(mpc_controller::MpcParametersConfig& config,
@@ -260,18 +283,14 @@ void MPCController::initializeBoundsTimeScaling() {
 }
 
 void MPCController::initializeBoundsQuadraticCost() {
-  const int state_variables = prediction_horizon_ * 2 * num_joints_;
-  const int acceleration_variables = control_horizon_ * num_joints_;
-  const int slack_variables =
-      soft_state_bounds_ ? (slack_per_step_ ? prediction_horizon_ : 1) * 2 * num_joints_ : 0;
-  const int decision_variables = state_variables + acceleration_variables + slack_variables;
-  x_init_ = casadi::DM::zeros(decision_variables, 1);
-  lbx_ = -casadi::DM::inf(decision_variables, 1);
-  ubx_ = casadi::DM::inf(decision_variables, 1);
+  const QcLayout& layout = layout_;
+  x_init_ = casadi::DM::zeros(layout.decision_vars, 1);
+  lbx_ = -casadi::DM::inf(layout.decision_vars, 1);
+  ubx_ = casadi::DM::inf(layout.decision_vars, 1);
   if (!soft_state_bounds_) {
-    for (int step = 0; step < prediction_horizon_; ++step) {
-      const int position_start = step * 2 * num_joints_;
-      const int velocity_start = position_start + num_joints_;
+    for (int step = 1; step <= prediction_horizon_; ++step) {
+      const int position_start = layout.xOffset(step);
+      const int velocity_start = layout.vOffset(step);
       lbx_(casadi::Slice(position_start, position_start + num_joints_)) =
           position_lower_bounds_;
       ubx_(casadi::Slice(position_start, position_start + num_joints_)) =
@@ -283,25 +302,18 @@ void MPCController::initializeBoundsQuadraticCost() {
     }
   }
   for (int step = 0; step < control_horizon_; ++step) {
-    const int start = state_variables + step * num_joints_;
+    const int start = layout.aOffset(step);
     lbx_(casadi::Slice(start, start + num_joints_)) = acceleration_min_;
     ubx_(casadi::Slice(start, start + num_joints_)) = acceleration_max_;
   }
   if (soft_state_bounds_) {
-    const int slack_start = state_variables + acceleration_variables;
-    lbx_(casadi::Slice(slack_start, decision_variables)) = 0.0;
+    lbx_(casadi::Slice(layout.bound_slack_offset,
+                       layout.bound_slack_offset + layout.bound_slack_vars)) = 0.0;
   }
-  const int jerk_transition_count = control_horizon_ - 1;
-  const int first_step_jerk_count = enforce_first_step_jerk_ ? 1 : 0;
-  const int soft_bound_constraints =
-      soft_state_bounds_ ? 4 * prediction_horizon_ * num_joints_ : 0;
-  const int constraint_count = (2 * prediction_horizon_ * num_joints_) +
-                               (2 * (jerk_transition_count + first_step_jerk_count) *
-                                num_joints_) +
-                               soft_bound_constraints;
-  lbg_ = casadi::DM::zeros(constraint_count, 1);
-  ubg_ = casadi::DM::inf(constraint_count, 1);
-  ubg_(casadi::Slice(0, 2 * prediction_horizon_ * num_joints_)) = 0.0;
+  lbg_ = casadi::DM::zeros(layout.constraint_rows, 1);
+  ubg_ = casadi::DM::inf(layout.constraint_rows, 1);
+  // Only the dynamics rows are equalities; every other row is "g >= 0".
+  ubg_(casadi::Slice(0, layout.dyn_rows)) = 0.0;
 }
 
 void MPCController::setDefaultConstraints() {
@@ -425,6 +437,20 @@ void MPCController::buildNlpTimeScaling() {
 void MPCController::buildNlpQuadraticCost() {
   decision_variables_.clear();
   constraints_.clear();
+  // Variable and row order below must follow layout_ (see QcLayout); the
+  // checkpoints verify each block boundary while the problem is built.
+  const auto symbolic_size = [](const std::vector<casadi::MX>& blocks) {
+    casadi_int size = 0;
+    for (const casadi::MX& block : blocks) size += block.size1();
+    return size;
+  };
+  const auto expect_offset = [&](casadi_int actual, int expected, const char* what) {
+    if (actual != expected) {
+      throw std::logic_error(std::string("QP layout mismatch at ") + what + ": built " +
+                             std::to_string(actual) + ", layout expects " +
+                             std::to_string(expected));
+    }
+  };
   casadi::MX total_cost = casadi::MX::zeros(1);
   casadi::MX q_vector = casadi::MX::sym("q_vector", num_joints_);
   casadi::MX r_vector = casadi::MX::sym("r_vector", num_joints_);
@@ -446,11 +472,12 @@ void MPCController::buildNlpQuadraticCost() {
     decision_variables_.push_back(positions[step]);
     decision_variables_.push_back(velocities[step]);
   }
+  expect_offset(symbolic_size(decision_variables_), layout_.accel_offset, "acceleration variables");
   decision_variables_.insert(decision_variables_.end(), accelerations.begin(), accelerations.end());
+  expect_offset(symbolic_size(decision_variables_), layout_.bound_slack_offset, "bound slack variables");
   if (soft_state_bounds_) {
-    const int slack_count = slack_per_step_ ? prediction_horizon_ : 1;
-    slacks.reserve(slack_count);
-    for (int index = 0; index < slack_count; ++index) {
+    slacks.reserve(layout_.bound_slack_blocks);
+    for (int index = 0; index < layout_.bound_slack_blocks; ++index) {
       slacks.push_back(casadi::MX::sym("S_" + std::to_string(index), 2 * num_joints_));
       decision_variables_.push_back(slacks.back());
     }
@@ -480,6 +507,7 @@ void MPCController::buildNlpQuadraticCost() {
                     slack_quadratic_weight_ * casadi::MX::dot(slack, slack);
     }
   }
+  expect_offset(symbolic_size(constraints_), layout_.first_jerk_row_offset, "first-step jerk rows");
   if (enforce_first_step_jerk_) {
     for (int joint = 0; joint < num_joints_; ++joint) {
       const casadi::MX acceleration_delta =
@@ -488,6 +516,7 @@ void MPCController::buildNlpQuadraticCost() {
       constraints_.push_back(jerk_max_[joint] * first_jerk_dt_ - acceleration_delta);
     }
   }
+  expect_offset(symbolic_size(constraints_), layout_.jerk_row_offset, "jerk transition rows");
   for (int step = 0; step < control_horizon_ - 1; ++step) {
     const double dt = prediction_step_durations_[step + 1];
     for (int joint = 0; joint < num_joints_; ++joint) {
@@ -497,8 +526,9 @@ void MPCController::buildNlpQuadraticCost() {
       constraints_.push_back(jerk_max_[joint] * dt - acceleration_delta);
     }
   }
+  expect_offset(symbolic_size(constraints_), layout_.bound_row_offset, "soft bound rows");
   if (soft_state_bounds_) {
-    // Order must match initializeBoundsQuadraticCost: all are "g >= 0".
+    // Soft bound rows start at layout_.bound_row_offset: all are "g >= 0".
     const casadi::DM position_lower(position_lower_bounds_);
     const casadi::DM position_upper(position_upper_bounds_);
     const casadi::DM velocity_lower(velocity_lower_bounds_);
@@ -516,9 +546,13 @@ void MPCController::buildNlpQuadraticCost() {
   std::vector<casadi::MX> parameters{positions_, velocities_, reference_positions_,
                                      previous_accelerations_, q_vector, r_vector};
   if (enforce_first_step_jerk_) parameters.push_back(first_jerk_dt_);
-  nlp_ = {{"x", casadi::MX::vertcat(decision_variables_)},
+  const casadi::MX decision_vector = casadi::MX::vertcat(decision_variables_);
+  const casadi::MX constraint_vector = casadi::MX::vertcat(constraints_);
+  expect_offset(decision_vector.size1(), layout_.decision_vars, "decision vector length");
+  expect_offset(constraint_vector.size1(), layout_.constraint_rows, "constraint vector length");
+  nlp_ = {{"x", decision_vector},
           {"f", total_cost},
-          {"g", casadi::MX::vertcat(constraints_)},
+          {"g", constraint_vector},
           {"p", casadi::MX::vertcat(parameters)}};
 }
 
@@ -692,8 +726,10 @@ casadi::DM MPCController::solve(const casadi::DM& initial_positions,
     lam_x_init_ = pending_lam_x_;
     lam_g_init_ = pending_lam_g_;
 
-    referent_angles_ = pending_x_(casadi::Slice(0, num_joints_));
-    referent_velocities_ = pending_x_(casadi::Slice(num_joints_, 2 * num_joints_));
+    referent_angles_ =
+        pending_x_(casadi::Slice(layout_.xOffset(1), layout_.xOffset(1) + num_joints_));
+    referent_velocities_ =
+        pending_x_(casadi::Slice(layout_.vOffset(1), layout_.vOffset(1) + num_joints_));
     if (solver_mode_ == SolverMode::TimeScaling) {
       const double final_time = static_cast<double>(pending_x_(pending_x_.size1() - 1));
       if (!std::isfinite(final_time) || final_time <= 0.0) {
@@ -719,15 +755,21 @@ void MPCController::commitSolution() {
 }
 
 void MPCController::resetWarmStart() {
-  x_init_ = casadi::DM::zeros(x_init_.size1(), 1);
-  if (solver_mode_ == SolverMode::TimeScaling) x_init_(x_init_.size1() - 1) = initial_tf_;
-  lam_x_init_ = casadi::DM::zeros(lam_x_init_.size1(), 1);
-  lam_g_init_ = casadi::DM::zeros(lam_g_init_.size1(), 1);
+  if (solver_mode_ == SolverMode::QuadraticCost) {
+    x_init_ = casadi::DM::zeros(layout_.decision_vars, 1);
+    lam_x_init_ = casadi::DM::zeros(layout_.decision_vars, 1);
+    lam_g_init_ = casadi::DM::zeros(layout_.constraint_rows, 1);
+  } else {
+    x_init_ = casadi::DM::zeros(x_init_.size1(), 1);
+    x_init_(x_init_.size1() - 1) = initial_tf_;
+    lam_x_init_ = casadi::DM::zeros(lam_x_init_.size1(), 1);
+    lam_g_init_ = casadi::DM::zeros(lam_g_init_.size1(), 1);
+  }
   has_pending_solution_ = false;
 }
 
 casadi::DM MPCController::getFirstAcceleration(const casadi::DM& solution) const {
-  const int start = prediction_horizon_ * 2 * num_joints_;
+  const int start = layout_.aOffset(0);
   if (solution.size1() < start + num_joints_) {
     throw std::invalid_argument("MPC solution is too short to contain the first acceleration");
   }

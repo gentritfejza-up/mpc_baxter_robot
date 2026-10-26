@@ -17,4 +17,11 @@
   <build_depend>eigen3</build_depend>
   <build_export_depend>eigen3</build_export_depend>
   <exec_depend>eigen3</exec_depend>
+
+  <test_depend>rostest</test_depend>
+  <test_depend>kdl_parser</test_depend>
+  <test_depend>urdf</test_depend>
+  <test_depend>orocos_kdl</test_depend>
+  <test_depend>baxter_description</test_depend>
+  <test_depend>xacro</test_depend>
 </package>

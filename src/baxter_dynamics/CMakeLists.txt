@@ -66,3 +66,26 @@ install(DIRECTORY config/
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
 )
+
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  find_package(kdl_parser REQUIRED)
+  find_package(urdf REQUIRED)
+  find_package(orocos_kdl REQUIRED)
+  add_rostest_gtest(lagrange_euler_kdl_test
+    test/lagrange_euler_kdl.test
+    test/lagrange_euler_kdl_test.cpp
+  )
+  target_include_directories(lagrange_euler_kdl_test PRIVATE
+    ${kdl_parser_INCLUDE_DIRS}
+    ${urdf_INCLUDE_DIRS}
+    ${orocos_kdl_INCLUDE_DIRS}
+  )
+  target_link_libraries(lagrange_euler_kdl_test
+    ${PROJECT_NAME}
+    ${catkin_LIBRARIES}
+    ${kdl_parser_LIBRARIES}
+    ${urdf_LIBRARIES}
+    ${orocos_kdl_LIBRARIES}
+  )
+endif()

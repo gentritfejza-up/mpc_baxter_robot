@@ -12,10 +12,10 @@
 
 #include <baxter_interface_cpp/limb.hpp>
 #include <dynamic_reconfigure/server.h>
-#include <mpc_controller/MpcParametersConfig.h>
+#include <baxter_mpc_controller/MpcParametersConfig.h>
 
 enum class SolverMode { TimeScaling, QuadraticCost };
-enum class SolverBackend { Ipopt, Osqp, Qpoases };
+enum class SolverBackend { Ipopt, Osqp, Qpoases, Qrqp, Ipqp };
 
 struct MpcSolveTiming {
   double argument_preparation_ms{0.0};
@@ -55,6 +55,7 @@ class MPCController {
   MpcSolveTiming getLastSolveTiming() const;
   std::string solverBackendName() const;
   int decisionVariableCount() const;
+  bool softStateBounds() const { return soft_state_bounds_; }
 
  private:
   void initializeVariables();
@@ -86,12 +87,26 @@ class MPCController {
   double tf_min_{0.1};
   double initial_tf_{1.0};
   double tf_max_{3.0};
-  double feasibility_tolerance_{1e-5};
-  double osqp_eps_abs_{1e-6};
-  double osqp_eps_rel_{1e-6};
-  int osqp_max_iter_{4000};
+  double feasibility_tolerance_{5e-3};
+  double osqp_eps_abs_{1e-4};
+  double osqp_eps_rel_{1e-4};
+  int osqp_max_iter_{3000};
   bool osqp_polishing_{true};
+  bool osqp_warm_start_{true};
   bool enforce_first_step_jerk_{false};
+  // Soft joint position/velocity bounds: non-negative slack variables keep the
+  // QP feasible when the measured state is already outside the hard limits
+  // (contact impacts, velocity overshoot). Acceleration bounds stay hard.
+  // Benchmarked on a 2 rad reference jump (OSQP, 1.5 s horizon): an L1 (linear)
+  // slack penalty stalls OSQP at its iteration cap, a purely quadratic penalty
+  // with one slack pair per joint per step converges in ~2 ms warm.
+  bool soft_state_bounds_{true};
+  bool slack_per_step_{true};   // false: one slack pair per joint for the whole horizon
+  double slack_linear_weight_{0.0};
+  double slack_quadratic_weight_{1.0e4};
+  // Velocity penalty as a fraction of the position weight (towards zero velocity):
+  // damps the otherwise bang-bang approach and reduces overshoot.
+  double velocity_weight_ratio_{0.05};
 
   casadi::DM x_init_;
   casadi::DM lam_x_init_;

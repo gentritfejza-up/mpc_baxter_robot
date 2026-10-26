@@ -43,6 +43,17 @@ void MPCControlManager::loadAndValidateConfiguration() {
             control_period_sec_ * 1000.0);
   cycle_deadline_sec_ /= 1000.0;
   nh_.param("robot/control/enforce_cycle_deadline", enforce_cycle_deadline_, true);
+  nh_.param("robot/control/braking_fallback", braking_fallback_enabled_, true);
+  nh_.param("robot/control/publish_on_deadline_miss", publish_on_deadline_miss_,
+            publish_on_deadline_miss_);
+  nh_.param("robot/control/max_latency_compensation_sec", max_latency_compensation_sec_,
+            max_latency_compensation_sec_);
+  if (!nh_.getParam("robot/acceleration_max", acceleration_max_) ||
+      !nh_.getParam("robot/acceleration_min", acceleration_min_) ||
+      acceleration_max_.size() != static_cast<size_t>(num_joints_) ||
+      acceleration_min_.size() != static_cast<size_t>(num_joints_)) {
+    throw std::invalid_argument("robot/acceleration_{min,max} must hold one value per joint");
+  }
 
   if (prediction_horizon_ < 2 || control_horizon_ <= 0 ||
       control_horizon_ > prediction_horizon_ || spinner_threads_ <= 0 ||
@@ -102,7 +113,7 @@ bool MPCControlManager::processControl(
 
   double first_jerk_dt = control_period_sec_;
   if (has_last_command_time_) {
-    first_jerk_dt = std::chrono::duration<double>(solve_start - last_command_time_).count();
+    first_jerk_dt = (ros::Time::now() - last_command_time_).toSec();
     first_jerk_dt = std::max(1e-4, std::min(first_jerk_dt, control_period_sec_));
   }
 
@@ -111,11 +122,10 @@ bool MPCControlManager::processControl(
         mpc_->solve(casadi::DM(positions), casadi::DM(velocities), casadi::DM(x_ref),
                     casadi::DM(previous_applied_accelerations_), first_jerk_dt);
     const casadi::DM first_acceleration = mpc_->getFirstAcceleration(solution);
-    const auto joint_names = limb_->jointNames();
-    const auto acceleration_command = mpc_->dmToMap(first_acceleration, joint_names);
-    const auto velocity_command = mpc_->dmToMap(mpc_->getReferentVelocities(), joint_names);
-    const auto angle_command = mpc_->dmToMap(mpc_->getReferentAngles(), joint_names);
-    const auto target_angles = mpc_->dmToMap(casadi::DM(x_ref), joint_names);
+    std::vector<double> acceleration_command(num_joints_);
+    for (int joint = 0; joint < num_joints_; ++joint) {
+      acceleration_command[joint] = static_cast<double>(first_acceleration(joint));
+    }
     const auto publish_time = std::chrono::steady_clock::now();
     const MpcSolveTiming timing = mpc_->getLastSolveTiming();
     last_postprocessing_ms_ =
@@ -125,38 +135,82 @@ bool MPCControlManager::processControl(
         std::chrono::duration<double>(publish_time - cycle_start).count();
     if (enforce_cycle_deadline_ && cycle_elapsed_sec > cycle_deadline_sec_) {
       ++deadline_misses_;
-      // Keep the validated solution only as a numerical seed. No command or
-      // applied-acceleration state is updated on a missed deadline.
-      mpc_->commitSolution();
-      ROS_ERROR_THROTTLE(1.0,
-                         "MPC missed %.2f ms deadline (%.2f ms); suppressing command.",
-                         cycle_deadline_sec_ * 1000.0, cycle_elapsed_sec * 1000.0);
-      return false;
+      if (!publish_on_deadline_miss_) {
+        // Keep the validated solution only as a numerical seed. No command or
+        // applied-acceleration state is updated on a missed deadline.
+        mpc_->commitSolution();
+        ROS_ERROR_THROTTLE(1.0,
+                           "MPC missed %.2f ms deadline (%.2f ms); suppressing command.",
+                           cycle_deadline_sec_ * 1000.0, cycle_deadline_sec_ * 1000.0);
+        return false;
+      }
+      ROS_WARN_THROTTLE(1.0, "MPC missed %.2f ms deadline (%.2f ms); commanding late.",
+                        cycle_deadline_sec_ * 1000.0, cycle_elapsed_sec * 1000.0);
     }
 
-    limb_->setReferentAngles(target_angles);
-    limb_->setJointAccelerations(acceleration_command, velocity_command, angle_command);
-    previous_applied_accelerations_.clear();
-    for (const auto& joint_name : joint_names) {
-      previous_applied_accelerations_.push_back(acceleration_command.at(joint_name));
-    }
+    publishCommand(acceleration_command, positions, velocities, x_ref, state.stamp);
     mpc_->commitSolution();
-    last_command_time_ = std::chrono::steady_clock::now();
-    has_last_command_time_ = true;
     ++successful_cycles_;
     return true;
   } catch (const std::exception& exception) {
     ++failed_cycles_;
-    mpc_->resetWarmStart();
-    ROS_ERROR_THROTTLE(1.0, "MPC solve failed; suppressing command: %s", exception.what());
+    ROS_ERROR_THROTTLE(1.0, "MPC solve failed: %s", exception.what());
+    if (braking_fallback_enabled_) publishBrakingFallback(positions, velocities, x_ref, state.stamp);
     return false;
   }
+}
+
+void MPCControlManager::publishCommand(const std::vector<double>& accelerations,
+                                       const std::vector<double>& positions,
+                                       const std::vector<double>& velocities,
+                                       const std::vector<double>& x_ref,
+                                       const ros::Time& state_stamp) {
+  const auto joint_names = limb_->jointNames();
+  // The torque loop integrates q_ref = q0 + v0*t + a*t^2/2 from the moment it
+  // receives the command, so (q0, v0) must describe the plant *now*, not at the
+  // time the state was sampled: propagate the sample through the solve latency
+  // with the acceleration that was being applied meanwhile.
+  double latency = state_stamp.isZero() ? 0.0 : (ros::Time::now() - state_stamp).toSec();
+  if (!std::isfinite(latency)) latency = 0.0;
+  latency = std::clamp(latency, 0.0, max_latency_compensation_sec_);
+  std::vector<double> base_positions(num_joints_);
+  std::vector<double> base_velocities(num_joints_);
+  for (int joint = 0; joint < num_joints_; ++joint) {
+    const double a_prev = previous_applied_accelerations_[joint];
+    base_positions[joint] =
+        positions[joint] + velocities[joint] * latency + 0.5 * a_prev * latency * latency;
+    base_velocities[joint] = velocities[joint] + a_prev * latency;
+  }
+  limb_->setReferentAngles(mpc_->dmToMap(casadi::DM(x_ref), joint_names));
+  limb_->setJointAccelerations(mpc_->dmToMap(casadi::DM(accelerations), joint_names),
+                               mpc_->dmToMap(casadi::DM(base_velocities), joint_names),
+                               mpc_->dmToMap(casadi::DM(base_positions), joint_names));
+  previous_applied_accelerations_ = accelerations;
+  last_command_time_ = ros::Time::now();
+  has_last_command_time_ = true;
+}
+
+void MPCControlManager::publishBrakingFallback(const std::vector<double>& positions,
+                                               const std::vector<double>& velocities,
+                                               const std::vector<double>& x_ref,
+                                               const ros::Time& state_stamp) {
+  std::vector<double> braking(num_joints_, 0.0);
+  for (int joint = 0; joint < num_joints_; ++joint) {
+    // Bring the joint to rest within one control period if the limits allow.
+    const double wanted = -velocities[joint] / control_period_sec_;
+    braking[joint] = std::clamp(wanted, acceleration_min_[joint], acceleration_max_[joint]);
+  }
+  ++fallback_cycles_;
+  ROS_WARN_THROTTLE(1.0, "MPC braking fallback active (%llu cycles).",
+                    static_cast<unsigned long long>(fallback_cycles_));
+  publishCommand(braking, positions, velocities, x_ref, state_stamp);
 }
 
 void MPCControlManager::run() {
   ros::AsyncSpinner spinner(spinner_threads_);
   spinner.start();
-  ros::WallRate rate(control_rate_hz_);
+  // ros::Rate follows /clock, so the model step matches simulated time in Gazebo.
+  ros::Rate rate(control_rate_hz_);
   while (ros::ok()) {
     const auto cycle_start = std::chrono::steady_clock::now();
     processControl(mpc_->getReferencePositions(), cycle_start);
@@ -164,13 +218,14 @@ void MPCControlManager::run() {
     const MpcSolveTiming timing = mpc_->getLastSolveTiming();
     ROS_INFO_THROTTLE(2.0,
                       "MPC backend=%s cycle=%.2f ms state=%.2f ms args=%.2f ms solve=%.2f ms "
-                      "validate=%.2f ms post=%.2f ms ok=%llu fail=%llu deadline=%llu",
+                      "validate=%.2f ms post=%.2f ms ok=%llu fail=%llu missed=%llu fallback=%llu",
                       mpc_->solverBackendName().c_str(), elapsedMs(cycle_start, cycle_end),
                       last_state_preparation_ms_, timing.argument_preparation_ms, timing.solver_ms,
                       timing.validation_ms, last_postprocessing_ms_,
                       static_cast<unsigned long long>(successful_cycles_),
                       static_cast<unsigned long long>(failed_cycles_),
-                      static_cast<unsigned long long>(deadline_misses_));
+                      static_cast<unsigned long long>(deadline_misses_),
+                      static_cast<unsigned long long>(fallback_cycles_));
     rate.sleep();
   }
 }

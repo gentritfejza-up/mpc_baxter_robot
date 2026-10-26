@@ -73,19 +73,38 @@ MPCController::MPCController(ros::NodeHandle& nh, int num_joints, int prediction
     solver_backend_ = SolverBackend::Osqp;
   } else if (backend == "qpoases") {
     solver_backend_ = SolverBackend::Qpoases;
+  } else if (backend == "qrqp") {
+    solver_backend_ = SolverBackend::Qrqp;  // CasADi built-in sparse active-set QP
+  } else if (backend == "ipqp") {
+    solver_backend_ = SolverBackend::Ipqp;  // CasADi built-in interior-point QP
   } else {
-    throw std::invalid_argument("robot/solver_backend must be 'ipopt', 'osqp', or 'qpoases'");
+    throw std::invalid_argument(
+        "robot/solver_backend must be 'ipopt', 'osqp', 'qpoases', 'qrqp', or 'ipqp'");
   }
   if (solver_mode_ == SolverMode::TimeScaling && solver_backend_ != SolverBackend::Ipopt) {
     throw std::invalid_argument("time_scaling is nonlinear and only supports the IPOPT backend");
   }
 
-  nh.param("robot/solver/feasibility_tolerance", feasibility_tolerance_, 1e-5);
-  nh.param("robot/solver/osqp/eps_abs", osqp_eps_abs_, 1e-6);
-  nh.param("robot/solver/osqp/eps_rel", osqp_eps_rel_, 1e-6);
-  nh.param("robot/solver/osqp/max_iter", osqp_max_iter_, 4000);
-  nh.param("robot/solver/osqp/polishing", osqp_polishing_, true);
+  nh.param("robot/solver/feasibility_tolerance", feasibility_tolerance_, feasibility_tolerance_);
+  nh.param("robot/solver/osqp/eps_abs", osqp_eps_abs_, osqp_eps_abs_);
+  nh.param("robot/solver/osqp/eps_rel", osqp_eps_rel_, osqp_eps_rel_);
+  nh.param("robot/solver/osqp/max_iter", osqp_max_iter_, osqp_max_iter_);
+  nh.param("robot/solver/osqp/polishing", osqp_polishing_, osqp_polishing_);
+  nh.param("robot/solver/osqp/warm_start", osqp_warm_start_, osqp_warm_start_);
+  nh.param("robot/solver/soft_state_bounds", soft_state_bounds_, soft_state_bounds_);
+  nh.param("robot/solver/slack_per_step", slack_per_step_, slack_per_step_);
+  nh.param("robot/solver/slack_linear_weight", slack_linear_weight_, slack_linear_weight_);
+  nh.param("robot/solver/slack_quadratic_weight", slack_quadratic_weight_,
+           slack_quadratic_weight_);
+  nh.param("robot/solver/velocity_weight_ratio", velocity_weight_ratio_, velocity_weight_ratio_);
+  if (!std::isfinite(velocity_weight_ratio_) || velocity_weight_ratio_ < 0.0) {
+    throw std::invalid_argument("robot/solver/velocity_weight_ratio must be finite and nonnegative");
+  }
   nh.param("robot/control/enforce_first_step_jerk", enforce_first_step_jerk_, false);
+  if (solver_mode_ == SolverMode::TimeScaling && soft_state_bounds_) {
+    ROS_WARN("Soft state bounds are only implemented for the qc formulation; ignoring.");
+    soft_state_bounds_ = false;
+  }
   setDefaultConstraints();
   validateConfiguration();
   initializeVariables();
@@ -98,7 +117,9 @@ MPCController::MPCController(ros::NodeHandle& nh, int num_joints, int prediction
 
   ROS_INFO_STREAM("MPC formulation=" << mode << " backend=" << backend
                                       << " variables=" << decisionVariableCount()
-                                      << " constraints=" << lbg_.size1());
+                                      << " constraints=" << lbg_.size1()
+                                      << " soft_state_bounds="
+                                      << (soft_state_bounds_ ? (slack_per_step_ ? "per-step" : "shared") : "off"));
 }
 
 void MPCController::validateConfiguration() const {
@@ -135,6 +156,11 @@ void MPCController::validateConfiguration() const {
       !std::isfinite(osqp_eps_abs_) || osqp_eps_abs_ <= 0.0 ||
       !std::isfinite(osqp_eps_rel_) || osqp_eps_rel_ <= 0.0 || osqp_max_iter_ <= 0) {
     throw std::invalid_argument("Invalid solver tolerances or iteration limit");
+  }
+  if (!std::isfinite(slack_linear_weight_) || slack_linear_weight_ < 0.0 ||
+      !std::isfinite(slack_quadratic_weight_) || slack_quadratic_weight_ < 0.0 ||
+      (soft_state_bounds_ && slack_linear_weight_ + slack_quadratic_weight_ <= 0.0)) {
+    throw std::invalid_argument("Slack weights must be finite, nonnegative and not both zero");
   }
 }
 
@@ -235,32 +261,44 @@ void MPCController::initializeBoundsTimeScaling() {
 
 void MPCController::initializeBoundsQuadraticCost() {
   const int state_variables = prediction_horizon_ * 2 * num_joints_;
-  const int decision_variables = state_variables + control_horizon_ * num_joints_;
+  const int acceleration_variables = control_horizon_ * num_joints_;
+  const int slack_variables =
+      soft_state_bounds_ ? (slack_per_step_ ? prediction_horizon_ : 1) * 2 * num_joints_ : 0;
+  const int decision_variables = state_variables + acceleration_variables + slack_variables;
   x_init_ = casadi::DM::zeros(decision_variables, 1);
   lbx_ = -casadi::DM::inf(decision_variables, 1);
   ubx_ = casadi::DM::inf(decision_variables, 1);
-  for (int step = 0; step < prediction_horizon_; ++step) {
-    const int position_start = step * 2 * num_joints_;
-    const int velocity_start = position_start + num_joints_;
-    lbx_(casadi::Slice(position_start, position_start + num_joints_)) =
-        position_lower_bounds_;
-    ubx_(casadi::Slice(position_start, position_start + num_joints_)) =
-        position_upper_bounds_;
-    lbx_(casadi::Slice(velocity_start, velocity_start + num_joints_)) =
-        velocity_lower_bounds_;
-    ubx_(casadi::Slice(velocity_start, velocity_start + num_joints_)) =
-        velocity_upper_bounds_;
+  if (!soft_state_bounds_) {
+    for (int step = 0; step < prediction_horizon_; ++step) {
+      const int position_start = step * 2 * num_joints_;
+      const int velocity_start = position_start + num_joints_;
+      lbx_(casadi::Slice(position_start, position_start + num_joints_)) =
+          position_lower_bounds_;
+      ubx_(casadi::Slice(position_start, position_start + num_joints_)) =
+          position_upper_bounds_;
+      lbx_(casadi::Slice(velocity_start, velocity_start + num_joints_)) =
+          velocity_lower_bounds_;
+      ubx_(casadi::Slice(velocity_start, velocity_start + num_joints_)) =
+          velocity_upper_bounds_;
+    }
   }
   for (int step = 0; step < control_horizon_; ++step) {
     const int start = state_variables + step * num_joints_;
     lbx_(casadi::Slice(start, start + num_joints_)) = acceleration_min_;
     ubx_(casadi::Slice(start, start + num_joints_)) = acceleration_max_;
   }
+  if (soft_state_bounds_) {
+    const int slack_start = state_variables + acceleration_variables;
+    lbx_(casadi::Slice(slack_start, decision_variables)) = 0.0;
+  }
   const int jerk_transition_count = control_horizon_ - 1;
   const int first_step_jerk_count = enforce_first_step_jerk_ ? 1 : 0;
+  const int soft_bound_constraints =
+      soft_state_bounds_ ? 4 * prediction_horizon_ * num_joints_ : 0;
   const int constraint_count = (2 * prediction_horizon_ * num_joints_) +
                                (2 * (jerk_transition_count + first_step_jerk_count) *
-                                num_joints_);
+                                num_joints_) +
+                               soft_bound_constraints;
   lbg_ = casadi::DM::zeros(constraint_count, 1);
   ubg_ = casadi::DM::inf(constraint_count, 1);
   ubg_(casadi::Slice(0, 2 * prediction_horizon_ * num_joints_)) = 0.0;
@@ -275,8 +313,11 @@ void MPCController::setDefaultConstraints() {
                             174.987 * casadi::pi / 180, 150 * casadi::pi / 180,
                             175.25 * casadi::pi / 180, 120 * casadi::pi / 180,
                             175.25 * casadi::pi / 180};
-  velocity_lower_bounds_ = {-1.5, -1.5, -1.5, -1.5, -4.0, -4.0, -4.0};
-  velocity_upper_bounds_ = {1.5, 1.5, 1.5, 1.5, 4.0, 4.0, 4.0};
+  // 80 % (70 % on the wrists) of the URDF velocity limits (1.5 / 4.0 rad/s): Gazebo and ros_control
+  // enforce the URDF limits by clamping the effort to one sign, which breaks the
+  // computed-torque model if the MPC rides the limit itself.
+  velocity_lower_bounds_ = {-1.2, -1.2, -1.2, -1.2, -2.8, -2.8, -2.8};
+  velocity_upper_bounds_ = {1.2, 1.2, 1.2, 1.2, 2.8, 2.8, 2.8};
 }
 
 void MPCController::validateInputs(const casadi::DM& positions, const casadi::DM& velocities,
@@ -393,6 +434,7 @@ void MPCController::buildNlpQuadraticCost() {
   std::vector<casadi::MX> positions(prediction_horizon_ + 1);
   std::vector<casadi::MX> velocities(prediction_horizon_ + 1);
   std::vector<casadi::MX> accelerations(control_horizon_);
+  std::vector<casadi::MX> slacks;
   positions[0] = positions_;
   velocities[0] = velocities_;
   for (int step = 0; step < control_horizon_; ++step) {
@@ -405,6 +447,14 @@ void MPCController::buildNlpQuadraticCost() {
     decision_variables_.push_back(velocities[step]);
   }
   decision_variables_.insert(decision_variables_.end(), accelerations.begin(), accelerations.end());
+  if (soft_state_bounds_) {
+    const int slack_count = slack_per_step_ ? prediction_horizon_ : 1;
+    slacks.reserve(slack_count);
+    for (int index = 0; index < slack_count; ++index) {
+      slacks.push_back(casadi::MX::sym("S_" + std::to_string(index), 2 * num_joints_));
+      decision_variables_.push_back(slacks.back());
+    }
+  }
 
   for (int step = 0; step < prediction_horizon_; ++step) {
     const double dt = prediction_step_durations_[step];
@@ -418,6 +468,17 @@ void MPCController::buildNlpQuadraticCost() {
                   (casadi::MX::mtimes(casadi::MX::mtimes(error.T(), q_matrix), error) +
                    casadi::MX::mtimes(casadi::MX::mtimes(acceleration.T(), r_matrix),
                                       acceleration));
+    if (velocity_weight_ratio_ > 0.0) {
+      const casadi::MX& velocity = velocities[step + 1];
+      total_cost += stage_scale * velocity_weight_ratio_ *
+                    casadi::MX::mtimes(casadi::MX::mtimes(velocity.T(), q_matrix), velocity);
+    }
+  }
+  if (soft_state_bounds_) {
+    for (const casadi::MX& slack : slacks) {
+      total_cost += slack_linear_weight_ * casadi::MX::sum1(slack) +
+                    slack_quadratic_weight_ * casadi::MX::dot(slack, slack);
+    }
   }
   if (enforce_first_step_jerk_) {
     for (int joint = 0; joint < num_joints_; ++joint) {
@@ -434,6 +495,22 @@ void MPCController::buildNlpQuadraticCost() {
           accelerations[step + 1](joint) - accelerations[step](joint);
       constraints_.push_back(acceleration_delta - jerk_min_[joint] * dt);
       constraints_.push_back(jerk_max_[joint] * dt - acceleration_delta);
+    }
+  }
+  if (soft_state_bounds_) {
+    // Order must match initializeBoundsQuadraticCost: all are "g >= 0".
+    const casadi::DM position_lower(position_lower_bounds_);
+    const casadi::DM position_upper(position_upper_bounds_);
+    const casadi::DM velocity_lower(velocity_lower_bounds_);
+    const casadi::DM velocity_upper(velocity_upper_bounds_);
+    for (int step = 1; step <= prediction_horizon_; ++step) {
+      const casadi::MX& slack = slacks[slack_per_step_ ? step - 1 : 0];
+      const casadi::MX position_slack = slack(casadi::Slice(0, num_joints_));
+      const casadi::MX velocity_slack = slack(casadi::Slice(num_joints_, 2 * num_joints_));
+      constraints_.push_back(positions[step] - position_lower + position_slack);
+      constraints_.push_back(position_upper - positions[step] + position_slack);
+      constraints_.push_back(velocities[step] - velocity_lower + velocity_slack);
+      constraints_.push_back(velocity_upper - velocities[step] + velocity_slack);
     }
   }
   std::vector<casadi::MX> parameters{positions_, velocities_, reference_positions_,
@@ -466,13 +543,29 @@ void MPCController::createSolver() {
     osqp_options["polishing"] = osqp_polishing_;
     osqp_options["verbose"] = false;
     options["osqp"] = osqp_options;
-    options["warm_start_primal"] = false;
-    options["warm_start_dual"] = false;
+    options["warm_start_primal"] = osqp_warm_start_;
+    options["warm_start_dual"] = osqp_warm_start_;
     solver_ = casadi::qpsol("mpc_solver", "osqp", nlp_, options);
-  } else {
+  } else if (solver_backend_ == SolverBackend::Qpoases) {
     options["printLevel"] = "none";
     options["sparse"] = true;
     solver_ = casadi::qpsol("mpc_solver", "qpoases", nlp_, options);
+  } else if (solver_backend_ == SolverBackend::Qrqp) {
+    options["print_iter"] = false;
+    options["print_header"] = false;
+    options["print_info"] = false;
+    options["max_iter"] = osqp_max_iter_;
+    options["constr_viol_tol"] = feasibility_tolerance_;
+    options["dual_inf_tol"] = feasibility_tolerance_;
+    solver_ = casadi::qpsol("mpc_solver", "qrqp", nlp_, options);
+  } else {
+    options["print_iter"] = false;
+    options["print_header"] = false;
+    options["print_info"] = false;
+    options["max_iter"] = osqp_max_iter_;
+    options["constr_viol_tol"] = feasibility_tolerance_;
+    options["dual_inf_tol"] = feasibility_tolerance_;
+    solver_ = casadi::qpsol("mpc_solver", "ipqp", nlp_, options);
   }
 }
 
@@ -515,12 +608,20 @@ void MPCController::validateResult(const std::map<std::string, casadi::DM>& resu
   std::string normalized_status = status;
   std::transform(normalized_status.begin(), normalized_status.end(), normalized_status.begin(),
                  [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-  if (success == "false" || success == "0" ||
-      normalized_status.find("inaccurate") != std::string::npos ||
-      normalized_status.find("infeasible") != std::string::npos ||
-      normalized_status.find("maximum") != std::string::npos ||
-      normalized_status.find("max_iter") != std::string::npos) {
+  // "solved inaccurate" (OSQP) means the iteration cap was hit before the
+  // requested tolerance; the returned point is still usable when it passes the
+  // feasibility check below, and it is a far better warm start than zeros.
+  const bool inaccurate = normalized_status.find("inaccurate") != std::string::npos;
+  if (!inaccurate &&
+      (success == "false" || success == "0" ||
+       normalized_status.find("infeasible") != std::string::npos ||
+       normalized_status.find("maximum") != std::string::npos ||
+       normalized_status.find("max_iter") != std::string::npos)) {
     throw std::runtime_error("MPC solver failed with return_status: " + status);
+  }
+  if (inaccurate) {
+    ROS_WARN_THROTTLE(1.0, "MPC solver hit its iteration limit (%s); using the result if feasible.",
+                      status.c_str());
   }
 
   double max_violation = 0.0;
@@ -542,7 +643,8 @@ void MPCController::validateResult(const std::map<std::string, casadi::DM>& resu
   accumulate_violation(x_it->second, lbx_, ubx_);
   accumulate_violation(g_it->second, lbg_, ubg_);
   if (max_violation > feasibility_tolerance_) {
-    // throw std::runtime_error("MPC solution violates constraints by " + std::to_string(max_violation));
+    throw std::runtime_error("MPC solution violates constraints by " +
+                             std::to_string(max_violation));
   }
 }
 
@@ -561,6 +663,7 @@ casadi::DM MPCController::solve(const casadi::DM& initial_positions,
                                                   first_jerk_dt);
     const auto solver_start = std::chrono::steady_clock::now();
     const auto result = solver_(arguments);
+
     const auto solver_end = std::chrono::steady_clock::now();
     const auto validation_start = std::chrono::steady_clock::now();
     last_solve_timing_ = {elapsedMs(preparation_start, solver_start),
@@ -570,6 +673,11 @@ casadi::DM MPCController::solve(const casadi::DM& initial_positions,
     } catch (...) {
       last_solve_timing_.validation_ms =
           elapsedMs(validation_start, std::chrono::steady_clock::now());
+      if (isFinite(result.at("x")) && isFinite(result.at("lam_x")) && isFinite(result.at("lam_g"))) {
+        x_init_ = result.at("x");
+        lam_x_init_ = result.at("lam_x");
+        lam_g_init_ = result.at("lam_g");
+      }
       throw;
     }
     const auto validation_end = std::chrono::steady_clock::now();
@@ -579,6 +687,10 @@ casadi::DM MPCController::solve(const casadi::DM& initial_positions,
     pending_lam_x_ = result.at("lam_x");
     pending_lam_g_ = result.at("lam_g");
     has_pending_solution_ = true;
+    // Seed the next solve from this iterate even if the caller rejects it (deadline).
+    x_init_ = pending_x_;
+    lam_x_init_ = pending_lam_x_;
+    lam_g_init_ = pending_lam_g_;
 
     referent_angles_ = pending_x_(casadi::Slice(0, num_joints_));
     referent_velocities_ = pending_x_(casadi::Slice(num_joints_, 2 * num_joints_));
@@ -591,7 +703,9 @@ casadi::DM MPCController::solve(const casadi::DM& initial_positions,
     }
     return pending_x_;
   } catch (...) {
-    resetWarmStart();
+    // Keep the previous seed: a solver that stalled on one cycle converges far
+    // faster from its last iterate than from zeros on the next one.
+    has_pending_solution_ = false;
     throw;
   }
 }
@@ -628,7 +742,9 @@ int MPCController::decisionVariableCount() const { return static_cast<int>(x_ini
 std::string MPCController::solverBackendName() const {
   if (solver_backend_ == SolverBackend::Ipopt) return "ipopt";
   if (solver_backend_ == SolverBackend::Osqp) return "osqp";
-  return "qpoases";
+  if (solver_backend_ == SolverBackend::Qpoases) return "qpoases";
+  if (solver_backend_ == SolverBackend::Qrqp) return "qrqp";
+  return "ipqp";
 }
 
 std::unordered_map<std::string, double> MPCController::dmToMap(

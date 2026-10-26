@@ -2,7 +2,7 @@
   <arg name="limb" default="left" doc="Which limb to control: left or right" />
   <arg name="gui" default="true" doc="Open the Gazebo client" />
   <arg name="headless" default="false" doc="Run Gazebo without rendering" />
-  <arg name="solver_backend" default="osqp" doc="Solver: osqp, ipopt, or qpoases" />
+  <arg name="solver_backend" default="osqp" doc="Solver: osqp, qpoases, qrqp, ipqp, or ipopt" />
   <arg name="mpc_rate_hz" default="50.0" doc="MPC command update rate" />
   <arg name="cycle_deadline_ms" default="20.0" doc="Maximum state-to-command latency" />
   <arg name="reference_interval_sec" default="10.0" doc="Seconds between test poses" />

@@ -57,6 +57,7 @@ void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr& msg) {
     }
   }
   last_joint_state_received_at_ = ros::WallTime::now();
+  last_joint_state_stamp_ = msg->header.stamp.isZero() ? ros::Time::now() : msg->header.stamp;
 }
 
 void Limb::onJointReferentAngles(const baxter_core_msgs::ReferentJointAngles::ConstPtr& msg) {
@@ -185,7 +186,8 @@ std::unordered_map<std::string, double> Limb::jointVelocities() const {
 
 JointStateSnapshot Limb::jointStateSnapshot() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return JointStateSnapshot{joint_angle_, joint_velocity_, last_joint_state_received_at_};
+  return JointStateSnapshot{joint_angle_, joint_velocity_, last_joint_state_received_at_,
+                            last_joint_state_stamp_};
 }
 
 std::unordered_map<std::string, double> Limb::jointEfforts() const {

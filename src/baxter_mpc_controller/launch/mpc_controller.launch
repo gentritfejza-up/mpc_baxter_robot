@@ -1,7 +1,7 @@
 <launch>
   <arg name="limb" default="left" doc="Which limb to control: left or right" />
   <arg name="solver_mode" default="qc" doc="MPC formulation: qc or time_scaling" />
-  <arg name="solver_backend" default="osqp" doc="Solver: osqp, ipopt, or qpoases" />
+  <arg name="solver_backend" default="osqp" doc="Solver: osqp, qpoases, qrqp, ipqp, or ipopt" />
   <arg name="mpc_rate_hz" default="50.0" doc="MPC command update rate" />
   <arg name="cycle_deadline_ms" default="20.0" doc="Maximum state-to-command latency" />
 

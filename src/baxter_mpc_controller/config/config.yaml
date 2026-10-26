@@ -1,25 +1,49 @@
 robot:
   solver_mode: "qc"  # "qc" or "time_scaling"
-  solver_backend: "osqp"  # qc: "osqp", "ipopt", or "qpoases"; time_scaling: "ipopt"
+  solver_backend: "osqp"  # qc: "osqp", "qpoases", "qrqp" (CasADi built-in), "ipqp", or "ipopt"; time_scaling: "ipopt"
   solver:
-    feasibility_tolerance: 1.0e-2
+    # Solutions violating any bound by more than this are rejected (fallback is used).
+    feasibility_tolerance: 5.0e-3
+    # Joint position/velocity limits are soft (quadratic slack per joint per step)
+    # so a measured state outside the limits (impact, overspeed) never makes the
+    # QP infeasible. Acceleration limits stay hard. Keep the linear weight at 0:
+    # an L1 term makes OSQP stall at its iteration cap on large reference jumps.
+    soft_state_bounds: true
+    slack_per_step: true
+    slack_linear_weight: 0.0
+    slack_quadratic_weight: 10000.0
+    # Velocity penalty (fraction of the position weight) damps the approach.
+    velocity_weight_ratio: 0.05
     osqp:
-      eps_abs: 1.0e-2
-      eps_rel: 1.0e-2
-      max_iter: 10000
+      # Benchmarked with the state advancing along the plan and periodic stops
+      # (mpc_solver_benchmark _simulate:=true): 1e-5 stalls for ~300 ms after a
+      # stop, 1e-4 with a 3000-iteration cap solves in ~3.5 ms median, ~50 ms p95.
+      eps_abs: 1.0e-4
+      eps_rel: 1.0e-4
+      max_iter: 3000
       polishing: true
+      warm_start: true
   control:
-    mpc_rate_hz: 20.0
-    prediction_duration_sec: 0.5
-    prediction_horizon: 30
-    control_horizon: 20
-    mpc_spinner_threads: 10
+    mpc_rate_hz: 50.0
+    # The horizon must cover a full stop from the velocity limit:
+    # v_max^2 / (2 a_max) = 1.5^2 / 4 = 0.56 rad needs 0.75 s for the big joints.
+    prediction_duration_sec: 1.5
+    prediction_horizon: 25
+    control_horizon: 12
+    mpc_spinner_threads: 4
     state_timeout_sec: 0.04
-    cycle_deadline_ms: 50.0
+    cycle_deadline_ms: 20.0
     enforce_cycle_deadline: true
+    # A late solution is still commanded; late beats a torque-loop timeout.
+    publish_on_deadline_miss: true
+    # The base state sent to the torque loop is propagated through the solve
+    # latency (bounded here) so its PD reference never lags the plant.
+    max_latency_compensation_sec: 0.15
     enforce_first_step_jerk: false
-  acceleration_max: [2, 5, 2, 5, 10, 10, 10]
-  acceleration_min: [-2, -5, -2, -5, -10, -10, -10]
+    # On a solver failure command a braking acceleration instead of going silent.
+    braking_fallback: true
+  acceleration_max: [2, 5, 2, 5, 6, 6, 6]
+  acceleration_min: [-2, -5, -2, -5, -6, -6, -6]
 
-  jerk_max: [10, 25, 15, 25, 50, 50, 50]
-  jerk_min: [-10, -25, -15, -25, -50, -50, -50]
+  jerk_max: [10, 25, 15, 25, 30, 30, 30]
+  jerk_min: [-10, -25, -15, -25, -30, -30, -30]

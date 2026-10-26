@@ -32,6 +32,7 @@ catkin_install_python(PROGRAMS
   scripts/enable_simulated_baxter.py
   scripts/record_control_diagnostics.py
   scripts/send_sim_references.py
+  scripts/summarize_control_diagnostics.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -69,7 +70,9 @@ target_link_libraries(mpc_solver_benchmark PUBLIC
   ${catkin_LIBRARIES}
 )
 
-add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+# The library includes the generated dynamic_reconfigure header, so it must wait for gencfg
+# explicitly (parallel clean builds otherwise race it).
+add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_gencfg ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(run_mpc ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 add_dependencies(mpc_solver_benchmark ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 

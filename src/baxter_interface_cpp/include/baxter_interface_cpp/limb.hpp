@@ -35,6 +35,7 @@ struct JointStateSnapshot {
   std::unordered_map<std::string, double> positions;
   std::unordered_map<std::string, double> velocities;
   ros::WallTime received_at;
+  ros::Time stamp;  // message header stamp (ROS/sim clock), falls back to receipt time
 };
 
 /**
@@ -229,6 +230,7 @@ class Limb {
   mutable std::mutex mutex_;
   ros::Time last_acceleration_ref_stamp_;
   ros::WallTime last_joint_state_received_at_;
+  ros::Time last_joint_state_stamp_;
 
   std::unordered_map<std::string, std::vector<std::string>> joint_names_;
   std::string name;

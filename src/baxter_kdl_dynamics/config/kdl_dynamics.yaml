@@ -1,15 +1,21 @@
 robot:
   kdl_dynamics:
     root_link: "torso"
-    add_gravity_compensation: true
+    add_gravity_compensation: true      # Gazebo: true. Real Baxter adds gravity itself in torque mode: false.
     compensate_urdf_damping: true
     aggregate_tip_subtree_inertia: true
     robot_description_timeout_sec: 10.0
     s1_torque_limit_override: -1.0
-    kp: [0.0, 0.0, 0.0, 0.0, 20.0, 20.0, 20.0]
-    kd: [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+    # Computed-torque PD on the MPC trajectory, qdd = a_mpc + kp*(q_ref - q) + kd*(v_ref - v).
+    # Critically damped at ~8 rad/s on every joint (the wrists need it to reject elbow-motion coupling).
+    # The MPC re-bases the reference every cycle, so modest gains suffice.
+    kp: [60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0]
+    kd: [15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0]
+    # Track q0 + v0*t + a*t^2/2 from the MPC sample time instead of a fixed point.
+    extrapolate_reference: true
+    max_reference_extrapolation_sec: 0.1
   control:
     kdl_dynamics_rate_hz: 800.0
     kdl_diagnostics_rate_hz: 50.0
-    acceleration_ref_timeout_sec: 0.2
+    acceleration_ref_timeout_sec: 0.3
     spinner_threads: 5

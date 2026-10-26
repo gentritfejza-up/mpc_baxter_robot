@@ -71,7 +71,8 @@ int main(int argc, char** argv) {
       } else {
         try {
           const auto result = dynamics.compute(positions, velocities, accelerations,
-                                               limb.jointAnglesRef(), limb.jointVelocitiesRef());
+                                               limb.jointAnglesRef(), limb.jointVelocitiesRef(),
+                                               limb.accelerationRefAgeSec());
           limb.setJointTorques(result.torques);
           torque_control_active = true;
           ++sequence;

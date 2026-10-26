@@ -51,6 +51,13 @@ robot:
 
     Q_j: [0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
+  # Computed-torque PD around the MPC trajectory (same gains as the KDL backend).
+  lagrange_euler:
+    kp: [60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0]
+    kd: [15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0]
+    extrapolate_reference: true
+    max_reference_extrapolation_sec: 0.1
+
   torque_limits:
     shoulder_elbow_max: 50.0
     shoulder_elbow_min: -50.0

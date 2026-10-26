@@ -160,6 +160,13 @@ KdlInverseDynamics::KdlInverseDynamics(ros::NodeHandle& nh, const std::string& l
 
   nh.param("robot/kdl_dynamics/add_gravity_compensation", add_gravity_compensation_, true);
   nh.param("robot/kdl_dynamics/compensate_urdf_damping", compensate_urdf_damping_, true);
+  nh.param("robot/kdl_dynamics/extrapolate_reference", extrapolate_reference_,
+           extrapolate_reference_);
+  nh.param("robot/kdl_dynamics/max_reference_extrapolation_sec",
+           max_reference_extrapolation_sec_, max_reference_extrapolation_sec_);
+  if (!std::isfinite(max_reference_extrapolation_sec_) || max_reference_extrapolation_sec_ < 0.0) {
+    throw std::runtime_error("max_reference_extrapolation_sec must be finite and nonnegative");
+  }
   kp_ = loadGainVector(nh, "robot/kdl_dynamics/kp", joint_names_.size());
   kd_ = loadGainVector(nh, "robot/kdl_dynamics/kd", joint_names_.size());
 
@@ -200,8 +207,13 @@ DynamicsResult KdlInverseDynamics::compute(
     const std::unordered_map<std::string, double>& velocities,
     const std::unordered_map<std::string, double>& accelerations,
     const std::unordered_map<std::string, double>& reference_positions,
-    const std::unordered_map<std::string, double>& reference_velocities) {
+    const std::unordered_map<std::string, double>& reference_velocities,
+    double reference_age_sec) {
   const unsigned int count = joint_names_.size();
+  const double extrapolation =
+      extrapolate_reference_ && std::isfinite(reference_age_sec)
+          ? std::clamp(reference_age_sec, 0.0, max_reference_extrapolation_sec_)
+          : 0.0;
   KDL::JntArray q(count), qd(count), qdd(count), coriolis(count), gravity(count);
   KDL::JntSpaceInertiaMatrix mass(count);
   DynamicsResult result;
@@ -224,14 +236,20 @@ DynamicsResult KdlInverseDynamics::compute(
     const std::string& joint = joint_names_[i];
     q(i) = requiredValue(positions, joint, "joint positions");
     qd(i) = requiredValue(velocities, joint, "joint velocities");
-    const double q_ref = kp_[i] > 0.0
-                             ? requiredValue(reference_positions, joint, "reference positions")
-                             : q(i);
-    const double qd_ref = kd_[i] > 0.0
-                              ? requiredValue(reference_velocities, joint, "reference velocities")
-                              : qd(i);
-    const double position_error = q_ref - q(i);
     const double mpc_acceleration = requiredValue(accelerations, joint, "reference accelerations");
+    const bool needs_reference = kp_[i] > 0.0 || kd_[i] > 0.0;
+    const double q0 = needs_reference
+                          ? requiredValue(reference_positions, joint, "reference positions")
+                          : q(i);
+    const double v0 = needs_reference
+                          ? requiredValue(reference_velocities, joint, "reference velocities")
+                          : qd(i);
+    const double q_ref = needs_reference
+                             ? q0 + v0 * extrapolation +
+                                   0.5 * mpc_acceleration * extrapolation * extrapolation
+                             : q(i);
+    const double qd_ref = needs_reference ? v0 + mpc_acceleration * extrapolation : qd(i);
+    const double position_error = q_ref - q(i);
     const double pd_acceleration =
         kp_[i] * position_error + kd_[i] * (qd_ref - qd(i));
     qdd(i) = mpc_acceleration + pd_acceleration;

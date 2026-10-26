@@ -39,7 +39,8 @@ class KdlInverseDynamics {
       const std::unordered_map<std::string, double>& velocities,
       const std::unordered_map<std::string, double>& accelerations,
       const std::unordered_map<std::string, double>& reference_positions,
-      const std::unordered_map<std::string, double>& reference_velocities);
+      const std::unordered_map<std::string, double>& reference_velocities,
+      double reference_age_sec = 0.0);
 
   const std::vector<std::string>& jointNames() const { return joint_names_; }
 
@@ -58,6 +59,10 @@ class KdlInverseDynamics {
   std::vector<double> kd_;
   bool add_gravity_compensation_{true};
   bool compensate_urdf_damping_{true};
+  // The MPC sends (q0, v0, a) sampled at its solve time; the reference the PD
+  // loop tracks is q0 + v0*t + a*t^2/2 with t = age of the command, clamped.
+  bool extrapolate_reference_{true};
+  double max_reference_extrapolation_sec_{0.1};
 };
 
 }  // namespace baxter_kdl_dynamics

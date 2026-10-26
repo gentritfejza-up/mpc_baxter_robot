@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <ros/ros.h>
 
@@ -26,6 +27,13 @@ private:
   int loop_rate_hz_{800};
   double acceleration_ref_timeout_sec_{0.2};
   bool torque_control_active_{false};
+  // Optional computed-torque PD around the MPC trajectory (robot/lagrange_euler/kp, kd).
+  std::vector<double> kp_;
+  std::vector<double> kd_;
+  bool extrapolate_reference_{true};
+  double max_reference_extrapolation_sec_{0.1};
+
+  std::unordered_map<std::string, double> commandedAccelerations() const;
 
   void exitTorqueControl();
 };

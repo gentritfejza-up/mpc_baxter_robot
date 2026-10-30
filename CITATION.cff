@@ -10,6 +10,7 @@ authors:
     affiliation: "University of Prishtina, Faculty of Electrical and Computer Engineering, Electronics, Automation and Robotics"
 date-released: 2026
 repository-code: "https://github.com/gentritfejza-up/mpc_baxter_robot"
+license: MIT
 keywords:
   - model predictive control
   - computed torque control

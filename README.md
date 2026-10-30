@@ -4,7 +4,8 @@
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)](#)
 [![Python 3.8](https://img.shields.io/badge/Python-3.8-3776AB?logo=python)](#)
 [![Gazebo 11](https://img.shields.io/badge/Gazebo-11-F58113)](#)
-[![Tests](https://img.shields.io/badge/unit_tests-45_passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/unit_tests-48_passing-brightgreen)](#development)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A real-time control stack for the Rethink Baxter robot: a convex model predictive controller
 (MPC) per arm that plans joint accelerations at 50 Hz under a **collision guard** (conveyor
@@ -35,6 +36,7 @@ validated in Gazebo and prepared for the real robot.
 - [Development](#development)
 - [Design decisions](#design-decisions)
 - [Citation](#citation)
+- [License](#license)
 
 ## What it does
 
@@ -415,3 +417,12 @@ Please cite the thesis when you use this work (see also `CITATION.cff`):
 
 Upstream components: Rethink Robotics' Baxter SDK and simulator packages (`src/baxter_*`
 submodules), CasADi, OSQP, KDL, ROS Noetic.
+
+## License
+
+The code in this repository written for the thesis (`src/baxter_mpc_controller`,
+`src/baxter_kdl_dynamics`, `src/baxter_dynamics`, `src/baxter_kinematics`,
+`src/baxter_interface_cpp`, `docs/`, `Taskfile.yml`, `docker/`) is released under the
+[MIT License](LICENSE), copyright 2026 Gentrit Fejza. The upstream Baxter packages keep their
+own licenses (BSD, Rethink Robotics). The license permits reuse; the thesis still asks to be
+cited, see [Citation](#citation).

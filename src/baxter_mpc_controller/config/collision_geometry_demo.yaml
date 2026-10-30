@@ -1,0 +1,16 @@
+# Body keep-outs for the pick-and-place demo (pick_and_place_demo.launch loads this after
+# collision_geometry.yaml and replaces the body list; arm_spheres are kept): the standard
+# set plus the two drop boxes behind the robot. models/drop_box at base-frame (-0.10, +0.90)
+# and (-0.10, -0.90): outer 260 x 260 mm, floor at base z 0.0, rim at 0.12, each on a
+# 60 mm column down to the ground. Lengths in metres.
+robot:
+  collision_geometry:
+    body:
+      - {name: torso,    type: aabb,    min: [-0.22, -0.20, -0.06], max: [0.17, 0.20, 0.60]}
+      - {name: head_1,   type: sphere,  center: [0.04,  0.04, 0.75], radius: 0.22}
+      - {name: head_2,   type: sphere,  center: [0.04, -0.04, 0.75], radius: 0.22}
+      - {name: pedestal, type: aabb,    min: [-0.30, -0.22, -0.924], max: [0.17, 0.22, -0.062]}
+      - {name: box_left,    type: aabb, min: [-0.23,  0.77, -0.02], max: [0.03,  1.03, 0.12]}
+      - {name: box_right,   type: aabb, min: [-0.23, -1.03, -0.02], max: [0.03, -0.77, 0.12]}
+      - {name: column_left,  type: aabb, min: [-0.13,  0.87, -0.93], max: [-0.07,  0.93, -0.02]}
+      - {name: column_right, type: aabb, min: [-0.13, -0.93, -0.93], max: [-0.07, -0.87, -0.02]}

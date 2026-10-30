@@ -90,12 +90,12 @@ Terms lagrangeEulerTerms(baxter::LagrangeEuler& le, const Eigen::VectorXd& q,
                          const Eigen::VectorXd& qd) {
   Terms t;
   const Eigen::VectorXd zero = Eigen::VectorXd::Zero(kN);
-  t.G = toVec(le.Torque_calc(toMap(q), toMap(zero), toMap(zero)));
-  t.C = toVec(le.Torque_calc(toMap(q), toMap(qd), toMap(zero))) - t.G;
+  t.G = toVec(le.computeTorques(toMap(q), toMap(zero), toMap(zero)));
+  t.C = toVec(le.computeTorques(toMap(q), toMap(qd), toMap(zero))) - t.G;
   for (int i = 0; i < kN; ++i) {
     Eigen::VectorXd unit = Eigen::VectorXd::Zero(kN);
     unit(i) = 1.0;
-    t.M.col(i) = toVec(le.Torque_calc(toMap(q), toMap(zero), toMap(unit))) - t.G;
+    t.M.col(i) = toVec(le.computeTorques(toMap(q), toMap(zero), toMap(unit))) - t.G;
   }
   return t;
 }
@@ -123,7 +123,7 @@ Terms kdlTerms(KDL::ChainDynParam& dyn, const Eigen::VectorXd& q, const Eigen::V
 
 TEST(LagrangeEulerKdl, MassCoriolisGravityMatchUrdf) {
   ros::NodeHandle nh;
-  // Compare raw model torques: disable the torque clamping applied by Torque_calc.
+  // Compare raw model torques: disable the torque clamping applied by computeTorques.
   for (const char* key : {"shoulder_elbow", "s1", "wrist"}) {
     nh.setParam(std::string("robot/torque_limits/") + key + "_max", 1.0e6);
     nh.setParam(std::string("robot/torque_limits/") + key + "_min", -1.0e6);

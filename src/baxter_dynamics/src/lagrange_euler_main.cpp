@@ -1,5 +1,6 @@
 #include "baxter_dynamics/lagrange_euler_node.hpp"
 
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,8 +11,8 @@
 int main(int argc, char **argv) {
   ros::init(argc, argv, "lagrange_euler_node");
 
-  // ros::remove_ros_args is not available in ROS Noetic; collect non-ROS args manually
-  // argv[0] is the program name; argv[1..] are user args after ros::init strips remappings
+  // ros::init strips the ROS remapping arguments, so the first remaining
+  // argument is the limb side passed by the launch file.
   const std::vector<std::string> args(argv + 1, argv + argc);
   if (args.empty()) {
     ROS_ERROR("Please specify the limb ('left' or 'right') as the first argument.");
@@ -27,7 +28,7 @@ int main(int argc, char **argv) {
   Eigen::initParallel();
   ros::NodeHandle nh;
 
-  auto node = std::make_unique<LagrangeEulerNode>(nh, limb_side);
+  auto node = std::make_unique<baxter::LagrangeEulerNode>(nh, limb_side);
   node->runNode();
-  return 0;
+  return EXIT_SUCCESS;
 }

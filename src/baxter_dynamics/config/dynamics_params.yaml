@@ -1,11 +1,15 @@
-# Unified dynamics configuration for Baxter robot
+# Dynamics configuration of the Baxter arm for the Lagrange-Euler backend
+# (baxter_dynamics). All link quantities are listed in kinematic order
+# s0, s1, e0, e1, w0, w1, w2; link 7 lumps the wrist, hand and gripper base.
 
 robot:
   limb:
+    # Not read by the current code; kept so existing parameter dumps still load.
     segment_names: ["l1", "d1", "l2", "d2", "l3", "d3", "l4", "d4"]
     left: ["left_s0", "left_s1", "left_e0", "left_e1", "left_w0", "left_w1", "left_w2"]
     right: ["right_s0", "right_s1", "right_e0", "right_e1", "right_w0", "right_w1", "right_w2"]
 
+    # Not read by the current code (the DH table below carries the lengths) [m].
     segment_lengths:
       l1: 0.27035
       d1: 0.069
@@ -16,6 +20,7 @@ robot:
       l4: 0.229525
       d4: 0.0
 
+    # [lower, upper] joint angle limits [rad].
     angle_limits:
       s0: [-1.701679, 1.701679]
       s1: [-2.146754, 1.0472]
@@ -25,6 +30,8 @@ robot:
       w1: [-1.5708, 2.0944]
       w2: [-3.059, 3.059]
 
+    # Classic DH rows [d (m), theta_offset (rad), a (m), alpha (rad)];
+    # ^{i-1}T_i = Rz(theta_offset + q_i) Tz(d) Tx(a) Rx(alpha).
     dh_parameters:
       s0: [0.27035, 0.0, 0.069, -1.570796327]
       s1: [0.0, 1.570796327, 0.0, 1.570796327]
@@ -34,6 +41,8 @@ robot:
       w1: [0.0, 0.0, 0.0, 1.570796327]
       w2: [0.229525, 0.0, 0.0, 0.0]
 
+    # URDF inertia tensor of each link about its centre of mass, rotated into
+    # the DH link frame, URDF sign convention (Ixy = -integral(x*y dm)) [kg m^2].
     inertia:
       Ixx: [0.0470910226, 0.0278859752, 0.0266173356, 0.0131822788, 0.0166774283, 0.0070053791, 0.0028495703]
       Iyy: [0.0359598848, 0.020787493, 0.0124800832, 0.0092685206, 0.0037463115, 0.0055275524, 0.0029160738]
@@ -42,22 +51,26 @@ robot:
       Iyz: [-0.000780869, 0.0020767576, -0.0010838933, 0.0007459496, 0.0006473235, -0.0002111504, 2.17158e-05]
       Izx: [0.0001278756, -0.000300964, 0.0002927063, 0.0003603617, 0.0001840371, -0.0004438478, 2.5727e-05]
 
+    # Centre of mass of each link in its DH frame, homogeneous coordinates [m, m, m, 1].
     com_x: [-0.05117, 0.00269, -0.07176, 0.00159, -0.01168, 0.00697, 0.0033067]
     com_y: [0.07908, -0.00529, 0.08149, -0.01117, 0.13111, 0.00600, 0.0006162]
     com_z: [0.00086, 0.06845, 0.00132, 0.02618, 0.00460, 0.06048, -0.0340665]
     com_w: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
+    # Link masses [kg].
     link_masses: [5.70044, 3.22698, 4.31272, 2.07206, 2.24665, 1.60979, 0.84228]
 
+    # Derivative operator of a revolute joint about z, 4x4 row major.
     Q_j: [0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
   # Computed-torque PD around the MPC trajectory (same gains as the KDL backend).
   lagrange_euler:
-    kp: [60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0]
-    kd: [15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0]
+    kp: [60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0]   # [1/s^2]
+    kd: [15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0]   # [1/s]
     extrapolate_reference: true
     max_reference_extrapolation_sec: 0.1
 
+  # Per joint-group torque clamps applied to the computed torques [N m].
   torque_limits:
     shoulder_elbow_max: 50.0
     shoulder_elbow_min: -50.0

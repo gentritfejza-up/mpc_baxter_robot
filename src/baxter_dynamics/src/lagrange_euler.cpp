@@ -5,62 +5,38 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace baxter {
 
-LagrangeEuler::LagrangeEuler(const std::string &limb, ros::NodeHandle &nh,
-                             std::shared_ptr<ForwardKinematics> fksolver)
-    : fksolver_(fksolver), limb_(limb) {
-  setJointNames(nh);
-  setInertia(nh);
-  setTorqueLimits(nh);
+LagrangeEuler::LagrangeEuler(
+    const std::string &limb, ros::NodeHandle &nh,
+    std::shared_ptr<ForwardKinematics> forward_kinematics)
+    : limb_(limb), forward_kinematics_(std::move(forward_kinematics)) {
+  loadJointNames(nh);
+  loadLinkInertialParameters(nh);
+  loadTorqueLimits(nh);
+  pseudo_inertia_ = buildPseudoInertiaMatrices();
 }
 
 LagrangeEuler::LagrangeEuler(const std::string &limb, ros::NodeHandle &nh)
-    : LagrangeEuler(limb, nh,
-                    std::make_shared<ForwardKinematics>(limb, nh)) {}
+    : LagrangeEuler(limb, nh, std::make_shared<ForwardKinematics>(limb, nh)) {}
 
-std::unordered_map<std::string, double>
-LagrangeEuler::EigenVectorToMap(const Eigen::VectorXd &values,
-                                const std::vector<std::string> &joint_names) {
-  if (values.size() != static_cast<int>(joint_names.size())) {
-    throw std::invalid_argument(
-        "Size mismatch between values and joint names.");
+// ---------------------------------------------------------------------------
+// Parameter loading
+// ---------------------------------------------------------------------------
+
+void LagrangeEuler::loadJointNames(ros::NodeHandle &nh) {
+  if (!nh.getParam("robot/limb/" + limb_, joint_names_) ||
+      static_cast<int>(joint_names_.size()) != kNumLinks) {
+    ROS_ERROR_STREAM("robot/limb/" << limb_ << " must list exactly "
+                                   << kNumLinks << " joint names.");
+    throw std::runtime_error("Invalid joint name list for limb: " + limb_);
   }
-
-  std::unordered_map<std::string, double> result;
-  result.reserve(joint_names.size());
-
-  for (size_t i = 0; i < joint_names.size(); ++i) {
-    const std::string &joint_name = joint_names[i];
-    double torque_value = values(i);
-
-    if (joint_name == limb_ + "_s1") {
-      torque_value = std::max(torque_limit_s1_min_,
-                              std::min(torque_limit_s1_max_, torque_value));
-    } else if (joint_name == limb_ + "_s0" || joint_name == limb_ + "_e0" ||
-               joint_name == limb_ + "_e1") {
-      torque_value = std::max(torque_limit_shoulder_elbow_min_,
-                              std::min(torque_limit_shoulder_elbow_max_,
-                                       torque_value));
-    } else if (joint_name == limb_ + "_w0" || joint_name == limb_ + "_w1" ||
-               joint_name == limb_ + "_w2") {
-      torque_value = std::max(torque_limit_wrist_min_,
-                              std::min(torque_limit_wrist_max_, torque_value));
-    }
-
-    result.emplace(joint_name, torque_value);
-  }
-
-  return result;
 }
 
-void LagrangeEuler::setJointNames(ros::NodeHandle &nh) {
-  nh.getParam(std::string("robot/limb/" + limb_), joint_names_);
-}
-
-void LagrangeEuler::setTorqueLimits(ros::NodeHandle &nh) {
+void LagrangeEuler::loadTorqueLimits(ros::NodeHandle &nh) {
   nh.param("robot/torque_limits/shoulder_elbow_max",
            torque_limit_shoulder_elbow_max_, 50.0);
   nh.param("robot/torque_limits/shoulder_elbow_min",
@@ -71,90 +47,74 @@ void LagrangeEuler::setTorqueLimits(ros::NodeHandle &nh) {
   nh.param("robot/torque_limits/wrist_min", torque_limit_wrist_min_, -20.0);
 }
 
-void LagrangeEuler::setInertia(ros::NodeHandle &nh) {
-  std::vector<double> Ixx_vec, Iyy_vec, Izz_vec, Ixy_vec, Iyz_vec, Izx_vec,
-      link_mass;
-
-  if (nh.getParam("robot/limb/inertia/Ixx", Ixx_vec) &&
-      nh.getParam("robot/limb/inertia/Iyy", Iyy_vec) &&
-      nh.getParam("robot/limb/inertia/Izz", Izz_vec) &&
-      nh.getParam("robot/limb/inertia/Ixy", Ixy_vec) &&
-      nh.getParam("robot/limb/inertia/Iyz", Iyz_vec) &&
-      nh.getParam("robot/limb/inertia/Izx", Izx_vec) &&
-      nh.getParam("robot/limb/link_masses", link_mass) &&
-      static_cast<int>(Ixx_vec.size()) == number_of_links_ &&
-      static_cast<int>(Iyy_vec.size()) == number_of_links_ &&
-      static_cast<int>(Izz_vec.size()) == number_of_links_ &&
-      static_cast<int>(Ixy_vec.size()) == number_of_links_ &&
-      static_cast<int>(Iyz_vec.size()) == number_of_links_ &&
-      static_cast<int>(Izx_vec.size()) == number_of_links_ &&
-      static_cast<int>(link_mass.size()) == number_of_links_) {
-    Ixx_ = Eigen::VectorXd::Map(Ixx_vec.data(), Ixx_vec.size());
-    Iyy_ = Eigen::VectorXd::Map(Iyy_vec.data(), Iyy_vec.size());
-    Izz_ = Eigen::VectorXd::Map(Izz_vec.data(), Izz_vec.size());
-    Ixy_ = Eigen::VectorXd::Map(Ixy_vec.data(), Ixy_vec.size());
-    Iyz_ = Eigen::VectorXd::Map(Iyz_vec.data(), Iyz_vec.size());
-    Izx_ = Eigen::VectorXd::Map(Izx_vec.data(), Izx_vec.size());
-    link_mass_ = Eigen::VectorXd::Map(link_mass.data(), link_mass.size());
-  } else {
-    ROS_ERROR("Failed to load inertia parameters.");
-    throw std::runtime_error("Invalid inertia or link mass parameters.");
-  }
-
-  std::vector<double> com_x, com_y, com_z, com_w;
-
-  if (nh.getParam("robot/limb/com_x", com_x) &&
-      nh.getParam("robot/limb/com_y", com_y) &&
-      nh.getParam("robot/limb/com_z", com_z) &&
-      nh.getParam("robot/limb/com_w", com_w) &&
-      static_cast<int>(com_x.size()) == number_of_links_ &&
-      static_cast<int>(com_y.size()) == number_of_links_ &&
-      static_cast<int>(com_z.size()) == number_of_links_ &&
-      static_cast<int>(com_w.size()) == number_of_links_) {
-    for (int i = 0; i < number_of_links_; i++) {
-      centre_of_mass_.row(i) << com_x[i], com_y[i], com_z[i], com_w[i];
+void LagrangeEuler::loadLinkInertialParameters(ros::NodeHandle &nh) {
+  // Every per-link table in the YAML is a flat list with one entry per link.
+  const auto load_per_link = [&nh](const std::string &key) {
+    std::vector<double> values;
+    if (!nh.getParam(key, values) ||
+        static_cast<int>(values.size()) != kNumLinks) {
+      ROS_ERROR_STREAM("Parameter " << key << " must hold " << kNumLinks
+                                    << " values.");
+      throw std::runtime_error("Invalid link parameter: " + key);
     }
-  } else {
-    ROS_ERROR("Failed to load the center of mass data.");
-    throw std::runtime_error("Invalid center of mass parameters.");
+    return values;
+  };
+
+  const std::vector<double> Ixx = load_per_link("robot/limb/inertia/Ixx");
+  const std::vector<double> Iyy = load_per_link("robot/limb/inertia/Iyy");
+  const std::vector<double> Izz = load_per_link("robot/limb/inertia/Izz");
+  const std::vector<double> Ixy = load_per_link("robot/limb/inertia/Ixy");
+  const std::vector<double> Iyz = load_per_link("robot/limb/inertia/Iyz");
+  const std::vector<double> Izx = load_per_link("robot/limb/inertia/Izx");
+  const std::vector<double> masses = load_per_link("robot/limb/link_masses");
+  const std::vector<double> com_x = load_per_link("robot/limb/com_x");
+  const std::vector<double> com_y = load_per_link("robot/limb/com_y");
+  const std::vector<double> com_z = load_per_link("robot/limb/com_z");
+  const std::vector<double> com_w = load_per_link("robot/limb/com_w");
+
+  for (int link = 0; link < kNumLinks; ++link) {
+    LinkInertialParameters &params = links_[link];
+    params.mass = masses[link];
+    params.centre_of_mass << com_x[link], com_y[link], com_z[link], com_w[link];
+    params.Ixx = Ixx[link];
+    params.Iyy = Iyy[link];
+    params.Izz = Izz[link];
+    params.Ixy = Ixy[link];
+    params.Iyz = Iyz[link];
+    params.Izx = Izx[link];
   }
 
-  std::vector<double> qj_data;
-  if (nh.getParam("robot/limb/Q_j", qj_data) && qj_data.size() == 16) {
-    Q_j_ =
-        Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(qj_data.data());
-  } else {
-    ROS_ERROR("Failed to load Q_j matrix.");
+  std::vector<double> Q_j_row_major;
+  if (!nh.getParam("robot/limb/Q_j", Q_j_row_major) ||
+      Q_j_row_major.size() != 16) {
+    ROS_ERROR("Parameter robot/limb/Q_j must hold 16 values (row major).");
     throw std::runtime_error("Invalid Q_j matrix parameter.");
   }
+  Q_j_ = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(
+      Q_j_row_major.data());
 }
 
-std::vector<Eigen::Matrix4d> LagrangeEuler::transformation_matrix(
-    const std::unordered_map<std::string, double> &joint_angles) {
-  return fksolver_->solveIntermediateFK(joint_angles);
-}
+// ---------------------------------------------------------------------------
+// Model matrices
+// ---------------------------------------------------------------------------
 
-std::vector<Eigen::Matrix4d> LagrangeEuler::inertia_mat() {
-  // The YAML stores the URDF inertia tensor of each link (taken about the link
-  // centre of mass, URDF sign convention I_xy = -integral(x*y dm)) already
-  // rotated into the DH link frame, plus the centre of mass expressed in that
-  // frame. The Lagrange-Euler pseudo-inertia matrix J_i = integral(r r^T dm)
-  // needs second moments about the DH frame *origin* with the
-  // integral(x*y dm) sign convention, so:
-  //   * shift the tensor to the origin with the parallel-axis theorem, which
-  //     adds m * c * c^T to the 3x3 block, and
-  //   * negate the products of inertia.
-  // Without both corrections the mass matrix is up to 30 % low on the wrist
-  // and ~6 % low on the shoulder (verified against KDL on the Baxter URDF).
-  std::vector<Eigen::Matrix4d> J_i_mat;
-  J_i_mat.reserve(number_of_links_);
-  for (int i = 0; i < number_of_links_; i++) {
-    const double m = link_mass_(i);
-    const Eigen::Vector3d c = centre_of_mass_.row(i).head<3>();
+LagrangeEuler::LinkMatrices LagrangeEuler::buildPseudoInertiaMatrices() const {
+  // J_i = int r r^T dm about the DH frame origin. The YAML tensor is about the
+  // centre of mass with the URDF sign convention (I_xy = -int xy dm), hence
+  // the sign flip on the products of inertia and the parallel-axis shift
+  // m c c^T (see lagrange_euler.hpp for the derivation). Without both
+  // corrections M is up to 30 % low on the wrist and ~6 % low on the
+  // shoulder (verified against KDL on the Baxter URDF).
+  LinkMatrices pseudo_inertia;
+  pseudo_inertia.reserve(kNumLinks);
+  for (const LinkInertialParameters &link : links_) {
+    const double m = link.mass;
+    const Eigen::Vector3d c = link.centre_of_mass.head<3>();
+
     Eigen::Matrix3d second_moment;
-    second_moment << (-Ixx_(i) + Iyy_(i) + Izz_(i)) / 2, -Ixy_(i), -Izx_(i),
-        -Ixy_(i), (Ixx_(i) - Iyy_(i) + Izz_(i)) / 2, -Iyz_(i),
-        -Izx_(i), -Iyz_(i), (Ixx_(i) + Iyy_(i) - Izz_(i)) / 2;
+    second_moment << (-link.Ixx + link.Iyy + link.Izz) / 2, -link.Ixy, -link.Izx,
+        -link.Ixy, (link.Ixx - link.Iyy + link.Izz) / 2, -link.Iyz,
+        -link.Izx, -link.Iyz, (link.Ixx + link.Iyy - link.Izz) / 2;
     second_moment += m * c * c.transpose();
 
     Eigen::Matrix4d J_i = Eigen::Matrix4d::Zero();
@@ -162,164 +122,194 @@ std::vector<Eigen::Matrix4d> LagrangeEuler::inertia_mat() {
     J_i.topRightCorner<3, 1>() = m * c;
     J_i.bottomLeftCorner<1, 3>() = m * c.transpose();
     J_i(3, 3) = m;
-    J_i_mat.push_back(J_i);
+    pseudo_inertia.push_back(J_i);
   }
-  return J_i_mat;
+  return pseudo_inertia;
 }
 
-std::vector<Eigen::Matrix4d>
-LagrangeEuler::U_ij(const std::vector<Eigen::Matrix4d> &transformation_mat) {
-  std::vector<Eigen::Matrix4d> Uij_vector;
-  Eigen::Matrix4d Uij;
-  for (int i = 1; i <= number_of_links_; i++) {
-    for (int j = 1; j <= number_of_links_; j++) {
-      if (j <= i) {
-        Uij = transformation_mat[j - 1] * Q_j_ *
-              transformation_mat[j - 1].inverse() * transformation_mat[i];
-      } else {
-        Uij.setZero();
-      }
-      Uij_vector.push_back(Uij);
+LagrangeEuler::LinkMatrices LagrangeEuler::computeJointDerivativeOperators(
+    const LinkMatrices &link_transforms) const {
+  // D_j = ^0T_{j-1} Q_j (^0T_{j-1})^{-1}; link_transforms[j] is ^0T_j with
+  // the zero-based joint index j, i.e. the frame the joint axis is fixed in.
+  LinkMatrices joint_operators;
+  joint_operators.reserve(kNumLinks);
+  for (int joint = 0; joint < kNumLinks; ++joint) {
+    const Eigen::Matrix4d &base_to_joint_frame = link_transforms[joint];
+    joint_operators.push_back(base_to_joint_frame * Q_j_ *
+                              base_to_joint_frame.inverse());
+  }
+  return joint_operators;
+}
+
+LagrangeEuler::LinkMatrices
+LagrangeEuler::computeUij(const LinkMatrices &link_transforms,
+                          const LinkMatrices &joint_operators) const {
+  LinkMatrices U_ij(kNumLinks * kNumLinks, Eigen::Matrix4d::Zero());
+  for (int i = 0; i < kNumLinks; ++i) {
+    const Eigen::Matrix4d &base_to_link = link_transforms[i + 1]; // ^0T_i
+    for (int j = 0; j <= i; ++j) {
+      U_ij[indexUij(i, j)] = joint_operators[j] * base_to_link;
     }
   }
-  return Uij_vector;
+  return U_ij;
 }
 
-std::vector<Eigen::Matrix4d>
-LagrangeEuler::U_ijk(const std::vector<Eigen::Matrix4d> &transformation_mat) {
-  std::vector<Eigen::Matrix4d> Uijk_vector;
-  Eigen::Matrix4d Uijk;
-  for (int i = 1; i <= number_of_links_; i++) {
-    for (int j = 1; j <= number_of_links_; j++) {
-      for (int k = 1; k <= number_of_links_; k++) {
-        if ((i >= k) && (k >= j)) {
-          Uijk = transformation_mat[j - 1] * Q_j_ *
-                 transformation_mat[j - 1].inverse() *
-                 transformation_mat[k - 1] * Q_j_ *
-                 transformation_mat[k - 1].inverse() * transformation_mat[i];
-        } else if ((i >= j) && (j >= k)) {
-          Uijk = transformation_mat[k - 1] * Q_j_ *
-                 transformation_mat[k - 1].inverse() *
-                 transformation_mat[j - 1] * Q_j_ *
-                 transformation_mat[j - 1].inverse() * transformation_mat[i];
-        } else {
-          Uijk.setZero();
+LagrangeEuler::LinkMatrices
+LagrangeEuler::computeUijk(const LinkMatrices &U_ij,
+                           const LinkMatrices &joint_operators) const {
+  // U_ijk = D_j U_ik for k >= j and D_k U_ij for j >= k (both require i >=
+  // max(j, k)); the two agree for j == k.
+  LinkMatrices U_ijk(kNumLinks * kNumLinks * kNumLinks,
+                     Eigen::Matrix4d::Zero());
+  for (int i = 0; i < kNumLinks; ++i) {
+    for (int j = 0; j <= i; ++j) {
+      for (int k = 0; k <= i; ++k) {
+        U_ijk[indexUijk(i, j, k)] =
+            k >= j ? joint_operators[j] * U_ij[indexUij(i, k)]
+                   : joint_operators[k] * U_ij[indexUij(i, j)];
+      }
+    }
+  }
+  return U_ijk;
+}
+
+LagrangeEuler::LinkMatrices
+LagrangeEuler::computeInertiaWeightedUij(const LinkMatrices &U_ij) const {
+  LinkMatrices weighted_U_ij(kNumLinks * kNumLinks, Eigen::Matrix4d::Zero());
+  for (int j = 0; j < kNumLinks; ++j) {
+    for (int i = 0; i <= j; ++i) {
+      weighted_U_ij[indexUij(j, i)] =
+          pseudo_inertia_[j] * U_ij[indexUij(j, i)].transpose();
+    }
+  }
+  return weighted_U_ij;
+}
+
+LagrangeEuler::JointMatrix
+LagrangeEuler::computeMassMatrix(const LinkMatrices &U_ij,
+                                 const LinkMatrices &weighted_U_ij) const {
+  JointMatrix mass_matrix = JointMatrix::Zero();
+  for (int i = 0; i < kNumLinks; ++i) {
+    for (int k = 0; k < kNumLinks; ++k) {
+      double M_ik = 0.0;
+      for (int j = std::max(i, k); j < kNumLinks; ++j) {
+        M_ik += (U_ij[indexUij(j, k)] * weighted_U_ij[indexUij(j, i)]).trace();
+      }
+      mass_matrix(i, k) = M_ik;
+    }
+  }
+  return mass_matrix;
+}
+
+LagrangeEuler::JointVector LagrangeEuler::computeCoriolisVector(
+    const LinkMatrices &U_ijk, const LinkMatrices &weighted_U_ij,
+    const JointVector &joint_velocities) const {
+  JointVector coriolis = JointVector::Zero();
+  for (int i = 0; i < kNumLinks; ++i) {
+    for (int k = 0; k < kNumLinks; ++k) {
+      for (int m = 0; m < kNumLinks; ++m) {
+        double h_ikm = 0.0;
+        for (int j = std::max({i, k, m}); j < kNumLinks; ++j) {
+          h_ikm += (U_ijk[indexUijk(j, k, m)] * weighted_U_ij[indexUij(j, i)])
+                       .trace();
         }
-
-        Uijk_vector.push_back(Uijk);
+        coriolis(i) += h_ikm * joint_velocities(k) * joint_velocities(m);
       }
     }
   }
-  return Uijk_vector;
+  return coriolis;
 }
 
-Eigen::MatrixXd
-LagrangeEuler::M_mat(const std::vector<Eigen::Matrix4d> &J_i,
-                     const std::vector<Eigen::Matrix4d> &Uij) {
-  Eigen::MatrixXd M_matrix{
-      Eigen::MatrixXd(number_of_links_, number_of_links_)};
-  double temp = 0;
-
-  for (int i = 0; i < number_of_links_; i++) {
-    for (int k = 0; k < number_of_links_; k++) {
-      temp = 0;
-      for (int j = std::max(i, k); j < number_of_links_; j++) {
-        temp += (Uij[j * number_of_links_ + k] * J_i[j] *
-                 (Uij[j * number_of_links_ + i].transpose()))
-                    .trace();
-      }
-      M_matrix(i, k) = temp;
+LagrangeEuler::JointVector
+LagrangeEuler::computeGravityVector(const LinkMatrices &U_ij) const {
+  const Eigen::Vector4d gravity(0.0, 0.0, -kGravity, 0.0);
+  JointVector gravity_torque = JointVector::Zero();
+  for (int i = 0; i < kNumLinks; ++i) {
+    double G_i = 0.0;
+    for (int j = i; j < kNumLinks; ++j) {
+      const Eigen::Vector4d com_sensitivity =
+          U_ij[indexUij(j, i)] * links_[j].centre_of_mass; // U_ji r_j
+      G_i += links_[j].mass * gravity.dot(com_sensitivity);
     }
+    gravity_torque(i) = -G_i;
   }
-  return M_matrix;
+  return gravity_torque;
 }
 
-Eigen::VectorXd LagrangeEuler::C_vec(
-    const std::vector<Eigen::Matrix4d> &J_i,
-    const std::vector<Eigen::Matrix4d> &Uij,
-    const std::vector<Eigen::Matrix4d> &Uijk,
-    const std::unordered_map<std::string, double> &joint_velocities) {
-  std::vector<double> velocities;
-  for (const auto &joint : joint_names_) {
-    velocities.push_back(joint_velocities.at(joint));
-  }
+// ---------------------------------------------------------------------------
+// Public interface
+// ---------------------------------------------------------------------------
 
-  Eigen::VectorXd H_i{Eigen::VectorXd(number_of_links_)};
-  H_i.setZero();
-  double h_ikm = 0;
-  for (int i = 0; i < number_of_links_; i++) {
-    for (int k = 0; k < number_of_links_; k++) {
-      for (int m = 0; m < number_of_links_; m++) {
-        h_ikm = 0;
-        for (int j = std::max({i, k, m}); j < number_of_links_; j++) {
-          h_ikm +=
-              (Uijk[j * (number_of_links_ * number_of_links_) +
-                    k * number_of_links_ + m] *
-               J_i[j] * Uij[j * number_of_links_ + i].transpose())
-                  .trace();
-        }
-        h_ikm = h_ikm * velocities[k] * velocities[m];
-        H_i(i) += h_ikm;
-      }
+LagrangeEuler::JointVector LagrangeEuler::mapToJointVector(
+    const std::unordered_map<std::string, double> &values,
+    const char *quantity_name) const {
+  JointVector ordered;
+  for (int i = 0; i < kNumLinks; ++i) {
+    const auto value_it = values.find(joint_names_[i]);
+    if (value_it == values.end()) {
+      throw std::runtime_error("Joint " + joint_names_[i] + " missing from " +
+                               quantity_name + ".");
     }
+    ordered(i) = value_it->second;
   }
-  return H_i;
+  return ordered;
 }
 
-Eigen::VectorXd
-LagrangeEuler::G_mat(const std::vector<Eigen::Matrix4d> &Uij) {
-  Eigen::VectorXd g{Eigen::VectorXd(kConstantFour)};
-  Eigen::VectorXd centre{Eigen::VectorXd(kConstantFour)};
-  Eigen::VectorXd G_matrix{Eigen::VectorXd(number_of_links_)};
-  g << 0, 0, -9.81, 0;
-  double temp = 0;
+std::unordered_map<std::string, double>
+LagrangeEuler::clampToTorqueLimits(const JointVector &torques) const {
+  // Written as max(min(.)) rather than std::clamp so that an inverted limit
+  // pair degrades to the lower bound instead of undefined behaviour.
+  const auto clamp_between = [](double value, double lower, double upper) {
+    return std::max(lower, std::min(upper, value));
+  };
 
-  for (int i = 0; i < number_of_links_; ++i) {
-    temp = 0;
-    for (int j = i; j < number_of_links_; j++) {
-      centre = centre_of_mass_.row(j);
-      temp += link_mass_[j] * g.transpose() *
-              Uij[j * number_of_links_ + i] * centre;
+  std::unordered_map<std::string, double> clamped;
+  clamped.reserve(joint_names_.size());
+
+  for (int i = 0; i < kNumLinks; ++i) {
+    const std::string &joint_name = joint_names_[i];
+    double torque = torques(i);
+
+    if (joint_name == limb_ + "_s1") {
+      torque = clamp_between(torque, torque_limit_s1_min_, torque_limit_s1_max_);
+    } else if (joint_name == limb_ + "_s0" || joint_name == limb_ + "_e0" ||
+               joint_name == limb_ + "_e1") {
+      torque = clamp_between(torque, torque_limit_shoulder_elbow_min_,
+                             torque_limit_shoulder_elbow_max_);
+    } else if (joint_name == limb_ + "_w0" || joint_name == limb_ + "_w1" ||
+               joint_name == limb_ + "_w2") {
+      torque = clamp_between(torque, torque_limit_wrist_min_,
+                             torque_limit_wrist_max_);
     }
-    G_matrix(i) = -temp;
+
+    clamped.emplace(joint_name, torque);
   }
-  return G_matrix;
+
+  return clamped;
 }
 
-std::unordered_map<std::string, double> LagrangeEuler::Torque_calc(
+std::unordered_map<std::string, double> LagrangeEuler::computeTorques(
     const std::unordered_map<std::string, double> &joint_angles,
     const std::unordered_map<std::string, double> &joint_velocities,
-    const std::unordered_map<std::string, double> &joint_accelerations) {
-  Eigen::VectorXd accelerations{Eigen::VectorXd(joint_names_.size())};
-  std::vector<Eigen::Matrix4d> transformation_matrices;
-  std::vector<Eigen::Matrix4d> inertia_matrices;
-  std::vector<Eigen::Matrix4d> uij_matrices;
-  std::vector<Eigen::Matrix4d> uijk_matrices;
-  Eigen::MatrixXd m_mat;
-  Eigen::VectorXd c_vec, g_vec;
+    const std::unordered_map<std::string, double> &joint_accelerations) const {
+  const JointVector qd = mapToJointVector(joint_velocities, "joint_velocities");
+  const JointVector qdd =
+      mapToJointVector(joint_accelerations, "joint_accelerations");
 
-  for (size_t i = 0; i < joint_names_.size(); i++) {
-    const auto joint_name = joint_names_[i];
-    if (joint_accelerations.find(joint_name) != joint_accelerations.end()) {
-      accelerations(i) = joint_accelerations.at(joint_name);
-    } else {
-      throw std::runtime_error("Joint name " + joint_name +
-                               " not found in joint_accelerations map.");
-    }
-  }
+  const LinkMatrices link_transforms =
+      forward_kinematics_->solveIntermediateFK(joint_angles);
+  const LinkMatrices joint_operators =
+      computeJointDerivativeOperators(link_transforms);
+  const LinkMatrices U_ij = computeUij(link_transforms, joint_operators);
+  const LinkMatrices U_ijk = computeUijk(U_ij, joint_operators);
+  const LinkMatrices weighted_U_ij = computeInertiaWeightedUij(U_ij);
 
-    transformation_matrices = this->transformation_matrix(joint_angles);
-    inertia_matrices = this->inertia_mat();
-    uij_matrices = this->U_ij(transformation_matrices);
-    uijk_matrices = this->U_ijk(transformation_matrices);
+  const JointMatrix M = computeMassMatrix(U_ij, weighted_U_ij);
+  const JointVector C = computeCoriolisVector(U_ijk, weighted_U_ij, qd);
+  const JointVector g = computeGravityVector(U_ij);
 
-    m_mat = this->M_mat(inertia_matrices, uij_matrices);
-    c_vec = this->C_vec(inertia_matrices, uij_matrices, uijk_matrices,
-              joint_velocities);
-    g_vec = this->G_mat(uij_matrices);
-
-    Eigen::VectorXd tau = m_mat * accelerations + c_vec + g_vec;
-  return EigenVectorToMap(tau, joint_names_);
+  const JointVector tau = M * qdd + C + g;
+  return clampToTorqueLimits(tau);
 }
 
 } // namespace baxter

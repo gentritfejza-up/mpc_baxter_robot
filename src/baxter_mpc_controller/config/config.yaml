@@ -1,13 +1,18 @@
+# Baxter MPC controller parameters (run_mpc, one node per arm). Loaded by
+# mpc_controller.launch, which then overrides solver_mode, solver_backend,
+# control/mpc_rate_hz, control/cycle_deadline_ms, geometry/enabled, geometry/guard/mode
+# and geometry/z_min from its launch arguments. Units: [rad], [rad/s], [rad/s^2], [m], [s].
 robot:
-  solver_mode: "qc"  # "qc" or "time_scaling"
-  solver_backend: "osqp"  # qc: "osqp", "qpoases", "qrqp" (CasADi built-in), "ipqp", or "ipopt"; time_scaling: "ipopt"
+  # ---- QP formulation and solver
+  solver_mode: "qc"        # "qc" or "time_scaling"
+  solver_backend: "osqp"   # qc: "osqp", "qpoases", "qrqp" (CasADi built-in), "ipqp", "ipopt"; time_scaling: "ipopt"
   solver:
-    # Solutions violating any bound by more than this are rejected (fallback is used).
+    # Solutions violating any bound by more than this are rejected (the fallback is used).
     feasibility_tolerance: 5.0e-3
     # Joint position/velocity limits are soft (quadratic slack per joint per step)
-    # so a measured state outside the limits (impact, overspeed) never makes the
-    # QP infeasible. Acceleration limits stay hard. Keep the linear weight at 0:
-    # an L1 term makes OSQP stall at its iteration cap on large reference jumps.
+    # so a measured state outside the limits (impact, overspeed) never makes the QP
+    # infeasible. Acceleration limits stay hard. Keep the linear weight at 0: an L1
+    # term makes OSQP stall at its iteration cap on large reference jumps.
     soft_state_bounds: true
     slack_per_step: true
     slack_linear_weight: 0.0
@@ -15,14 +20,29 @@ robot:
     # Velocity penalty (fraction of the position weight) damps the approach.
     velocity_weight_ratio: 0.05
     osqp:
-      # Benchmarked with the state advancing along the plan and periodic stops
-      # (mpc_solver_benchmark _simulate:=true): 1e-5 stalls for ~300 ms after a
-      # stop, 1e-4 with a 3000-iteration cap solves in ~3.5 ms median, ~50 ms p95.
-      eps_abs: 1.0e-4
-      eps_rel: 1.0e-4
-      max_iter: 3000
+      # Convergence tolerances: the closed loop corrects the residual, and tighter
+      # values only lengthen the iteration-bound solve-time tail (torso benchmark
+      # p95: 56 ms at 1e-4, 20 ms at 5e-4, median ~6 ms either way).
+      eps_abs: 5.0e-4
+      eps_rel: 5.0e-4
+      # Iteration cap, ~0.1 ms per iteration: bounds a solve at ~25 ms. An iterate at
+      # the cap is used when it passes the feasibility check; uncapped 100-330 ms
+      # solves let the arm coast into the torso.
+      max_iter: 250
+      rho: 0.1                  # ADMM step (OSQP default)
+      adaptive_rho: true        # false: keep rho fixed (deterministic convergence)
+      # Fixed adaptation interval: with 0 OSQP derives it from wall-clock timings and
+      # the same QP then converges differently under CPU load (a second arm or the
+      # pose generator next to it hit the iteration cap). Same solve times as the
+      # automatic choice on an idle CPU.
+      adaptive_rho_interval: 50
+      # Wall-clock cap per solve [s]; 0 disables. Needs an OSQP built with profiling
+      # (the bundled one is not: a nonzero value fails at solver creation).
+      time_limit_sec: 0.0
       polishing: true
       warm_start: true
+
+  # ---- Control loop
   control:
     mpc_rate_hz: 50.0
     # The horizon must cover a full stop from the velocity limit:
@@ -42,8 +62,83 @@ robot:
     enforce_first_step_jerk: false
     # On a solver failure command a braking acceleration instead of going silent.
     braking_fallback: true
+    # Start-up gate. Idle (no command, plan state reset) until /robot/state reports
+    # the robot enabled: the simulator holds the joints in position mode until then,
+    # so earlier commands wind up the plan and are released as a swing once torque
+    # mode engages.
+    require_enabled: true
+    # After the enable also wait until every joint moves slower than this for
+    # settle_hold_sec: the simulator's controller hand-over can kick the arm to
+    # >1 rad/s (50-100 ms after the enable), and taking over mid-kick starts the MPC
+    # from a state outside its velocity bounds.
+    settle_velocity_rad_s: 0.1
+    settle_hold_sec: 0.5
+    enable_delay_sec: 0.0     # extra idle time after the enable
+    # A joint faster than this times its velocity bound (a kick, a contact) is
+    # braked with the fallback until every joint is back in range: such a state
+    # makes the QP stall and its capped iterates are bang-bang. 0 disables.
+    overspeed_ratio: 1.25
+    # The first solve after enabling is repeated on its own iterate until it
+    # converges (up to this many extra passes) so no command comes from a capped,
+    # possibly bang-bang iterate.
+    first_solve_max_retries: 6
+
+  # ---- Collision guard (geometric safety). Shapes: config/collision_geometry.yaml.
+  geometry:
+    enabled: true
+    base_link: "base"
+    # Conveyor surface height in the base frame: the CT6030 belt top is 0.750 m
+    # above the ground and Baxter's base link 0.93 m (Gazebo spawn height), hence
+    # -0.18. Constraint: every sphere bottom >= z_min + floor_margin once armed.
+    # (Baxter's rest pose hangs its fingertips 0.73 m below base, far under the belt.)
+    z_min: -0.18
+    # CT6030 conveyor as drawn in RViz and spawned in Gazebo (baxter_mpc.launch
+    # conveyor_x/y/yaw override x/y/yaw): footprint centre and belt-axis yaw in the
+    # base frame; 1500 x 250 x 750 mm frame, 190 mm belt.
+    conveyor: {enabled: true, x: 0.70, y: 0.0, yaw: 1.5708,
+               length: 1.50, width: 0.25, belt_width: 0.19, height: 0.75}
+    # The floor is enforced only once the arm has reached its home position: the
+    # real robot starts there; the simulated one starts in the rest pose, which
+    # hangs below any belt. Set activate_at_home false to enforce it from startup.
+    floor:
+      activate_at_home: true
+      home_tolerance_rad: 0.05
+      home_position:          # Baxter "untucked" pose (s0 s1 e0 e1 w0 w1 w2)
+        left:  [-0.08, -1.00, -1.19, 1.94,  0.67, 1.03, -0.50]
+        right: [ 0.08, -1.00,  1.19, 1.94, -0.67, 1.03,  0.50]
+    # Row margins; each must exceed guard.margin + guard.worsening_tolerance.
+    floor_margin: 0.05        # fingertip (gripper sphere bottom) height above the belt
+    body_margin: 0.04         # surface-to-surface clearance from torso/head/pedestal
+    arm_margin: 0.10          # from the other arm's spheres (it moves)
+    activation_distance: 0.15 # rows farther than this at the linearisation point stay inactive
+    # A reference inside a keep-out is moved out of it (Gauss-Newton on the row
+    # gradients) before tracking, so the arm rests at the margin instead of
+    # pushing into it (which made the QP hit its iteration cap and chatter).
+    project_reference: true
+    # Rows may also hold for the point this far ahead along the predicted velocity
+    # (an approach-rate damper). Off: it makes the QP much harder (torso benchmark
+    # median 6 -> 9 ms, pressing against the belt 6 -> 29 ms) and the reference
+    # projection removes the chatter at its source.
+    velocity_lookahead_sec: 0.0
+    # Row margins grow by this per second into the horizon (+0.03 m at 1.5 s): the
+    # linearisation error is largest there and the guard checks true distances.
+    margin_growth_per_sec: 0.02
+    max_recovery_per_horizon: 0.05  # a row asks for at most this much clearance gain per horizon
+    rows_per_sphere: {floor: 1, body: 1, other_arm: 1}
+    step_stride: 1            # 2: rows on every second step + last (budget knob)
+    # Quadratic slack weight [1/m^2]. Position weights are ~40-80 per joint-step, so
+    # at this value 1 cm of penetration costs as much as ~1.6 rad of tracking error
+    # (at 1e4 the QP traded ~5 cm for 1 rad). OSQP solve times are unchanged.
+    # Write plain floats: rosparam parses "1.0e6" (no exponent sign) as a string.
+    slack_quadratic_weight: 1000000.0
+    guard: {mode: "reject", margin: 0.015, worsening_tolerance: 0.005}   # reject | warn | off
+    # The other arm is extrapolated at its measured joint velocity for
+    # extrapolation_sec into the horizon, then held (0: static).
+    other_arm: {required: true, timeout_sec: 0.1, extrapolation_sec: 0.3}
+    robot_description_timeout_sec: 10.0
+
+  # ---- Joint acceleration and jerk bounds (s0 s1 e0 e1 w0 w1 w2)
   acceleration_max: [2, 5, 2, 5, 6, 6, 6]
   acceleration_min: [-2, -5, -2, -5, -6, -6, -6]
-
   jerk_max: [10, 25, 15, 25, 30, 30, 30]
   jerk_min: [-10, -25, -15, -25, -30, -30, -30]

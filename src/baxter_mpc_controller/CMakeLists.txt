@@ -19,10 +19,16 @@ find_package(catkin REQUIRED COMPONENTS
   baxter_interface_cpp
   roscpp
   std_msgs
+  sensor_msgs
+  visualization_msgs
   dynamic_reconfigure
+  kdl_parser
+  urdf
 )
 
 find_package(casadi REQUIRED)
+find_package(orocos_kdl REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 generate_dynamic_reconfigure_options(
   cfg/MpcParameters.cfg
@@ -32,6 +38,8 @@ catkin_install_python(PROGRAMS
   scripts/enable_simulated_baxter.py
   scripts/record_control_diagnostics.py
   scripts/send_sim_references.py
+  scripts/pick_and_place_demo.py
+  scripts/enforce_arm_gravity.py
   scripts/summarize_control_diagnostics.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
@@ -39,21 +47,33 @@ catkin_install_python(PROGRAMS
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES ${PROJECT_NAME}
- CATKIN_DEPENDS baxter_core_msgs baxter_interface_cpp roscpp std_msgs dynamic_reconfigure
- DEPENDS casadi
+ CATKIN_DEPENDS baxter_core_msgs baxter_interface_cpp roscpp std_msgs sensor_msgs visualization_msgs dynamic_reconfigure kdl_parser urdf
+ DEPENDS casadi orocos_kdl EIGEN3
 )
 
 include_directories(
-include
+  include
   ${catkin_INCLUDE_DIRS}
+  ${orocos_kdl_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
 add_library(${PROJECT_NAME}
   src/mpc_controller.cpp
   src/mpc_controller_node.cpp
+  src/collision_primitives.cpp
+  src/arm_collision_model.cpp
+  src/geometry_rows.cpp
+  src/joint_state_listener.cpp
+  src/geometry_markers.cpp
   include/mpc_controller/mpc_controller.hpp
   include/mpc_controller/mpc_controller_node.hpp
+  include/mpc_controller/collision_primitives.hpp
+  include/mpc_controller/arm_collision_model.hpp
+  include/mpc_controller/geometry_rows.hpp
+  include/mpc_controller/joint_state_listener.hpp
+  include/mpc_controller/geometry_markers.hpp
 )
 
 add_executable(run_mpc src/main.cpp)
@@ -78,6 +98,7 @@ add_dependencies(mpc_solver_benchmark ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catk
 
 target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
+  ${orocos_kdl_LIBRARIES}
   casadi
 )
 
@@ -105,10 +126,34 @@ install(DIRECTORY include/${PROJECT_NAME}/
 
 install(DIRECTORY config/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/config
-  FILES_MATCHING PATTERN "*.yaml"
+  FILES_MATCHING PATTERN "*.yaml" PATTERN "*.rviz"
 )
 
+install(DIRECTORY models/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/models
+)
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
   FILES_MATCHING PATTERN "*.launch"
 )
+
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  catkin_add_gtest(collision_primitives_test test/collision_primitives_test.cpp)
+  target_link_libraries(collision_primitives_test ${PROJECT_NAME} ${catkin_LIBRARIES})
+  add_rostest_gtest(arm_collision_model_test
+    test/arm_collision_model.test
+    test/arm_collision_model_test.cpp
+  )
+  target_link_libraries(arm_collision_model_test ${PROJECT_NAME} ${catkin_LIBRARIES} ${orocos_kdl_LIBRARIES})
+  add_rostest_gtest(geometry_rows_test
+    test/geometry_rows.test
+    test/geometry_rows_test.cpp
+  )
+  target_link_libraries(geometry_rows_test ${PROJECT_NAME} ${catkin_LIBRARIES} ${orocos_kdl_LIBRARIES})
+  add_rostest_gtest(mpc_geometry_rows_test
+    test/mpc_geometry_rows.test
+    test/mpc_geometry_rows_test.cpp
+  )
+  target_link_libraries(mpc_geometry_rows_test ${PROJECT_NAME} ${catkin_LIBRARIES} ${orocos_kdl_LIBRARIES} casadi)
+endif()

@@ -1,24 +1,40 @@
 <launch>
-  <arg name="limb" default="left" doc="Which limb to control: left or right" />
+  <!-- Gazebo validation of the Baxter MPC: simulator, computed-torque loop, MPC with the
+       collision guard, the CT6030 conveyor, an enable sequencer, the diagnostics recorder
+       and the reference sender. pick_and_place_demo.launch builds on this file. -->
 
+  <!-- Which arm(s) -->
+  <arg name="limb" default="left" doc="Which limb to control: left or right" />
+  <arg name="both_arms" default="false"
+       doc="Also run the torque loop and MPC for the other arm (arm-vs-arm validation)" />
+
+  <!-- Gazebo -->
   <arg name="paused" default="false" doc="Start Gazebo paused" />
   <arg name="use_sim_time" default="true" doc="Use the Gazebo clock" />
   <arg name="gui" default="true" doc="Open the Gazebo client" />
   <arg name="headless" default="false" doc="Run Gazebo without rendering" />
   <arg name="debug" default="false" doc="Run Gazebo under gdb" />
   <arg name="auto_enable" default="true" doc="Enable Baxter after the simulator is ready" />
-  <arg name="send_references" default="true" doc="Send five test poses to the MPC" />
-  <arg name="reference_interval_sec" default="6.0" doc="Seconds between test poses" />
-  <arg name="report_interval_sec" default="1.0" doc="Seconds between tracking reports" />
-  <arg name="repeat_references" default="false" doc="Repeat the test-pose sequence" />
+  <arg name="rviz" default="false" doc="Open RViz with the collision-guard markers" />
+
+  <!-- Reference sender (send_sim_references.py) -->
+  <arg name="send_references" default="true" doc="Send the test-pose sequence to the MPC" />
+  <arg name="pose_count" default="100" doc="Number of random test poses to send" />
+  <arg name="reference_interval_sec" default="6.0" doc="Dwell per test pose [s]" />
+  <arg name="report_interval_sec" default="1.0" doc="Seconds between TRACK tracking reports" />
+  <arg name="repeat_references" default="false" doc="Repeat the test-pose sequence until shutdown" />
   <arg name="shutdown_after_references" default="false"
        doc="Shut the whole launch down when the pose sequence finishes (validation runs)" />
-  <arg name="pose_count" default="100" doc="Number of test poses to send" />
+  <arg name="scenario" default=""
+       doc="Reference sender scenario: '' (random poses), floor, torso, crossing, belt" />
+
+  <!-- Diagnostics recorder (record_control_diagnostics.py) -->
   <arg name="record_diagnostics" default="true" doc="Write synchronized MPC/KDL diagnostics" />
   <arg name="diagnostics_file" default="/workspace/baxter_mpc_diagnostics.txt"
        doc="Output JSON-lines text file" />
   <arg name="diagnostics_rate_hz" default="20.0" doc="Diagnostics sample rate" />
 
+  <!-- Controllers -->
   <arg name="solver_mode" default="qc" doc="MPC formulation: qc or time_scaling" />
   <arg name="solver_backend" default="osqp" doc="Solver: osqp, qpoases, qrqp, ipqp, or ipopt" />
   <arg name="dynamics_backend" default="kdl"
@@ -32,6 +48,17 @@
   <arg name="sim_s1_torque_max" default="100.0" doc="Simulated s1 positive torque limit in Nm" />
   <arg name="sim_s1_torque_min" default="-100.0" doc="Simulated s1 negative torque limit in Nm" />
 
+  <!-- Collision guard and conveyor -->
+  <arg name="geometry" default="true" doc="Enable the MPC collision guard" />
+  <arg name="guard_mode" default="reject" doc="Collision guard: reject | warn | off" />
+  <!-- CT6030 belt top: 0.75 m above the ground, Baxter's base 0.93 m above it, hence -0.18.
+       The floor is armed when the arm reaches home. -->
+  <arg name="z_min" default="-0.18" doc="Conveyor surface height in the base frame [m]" />
+  <arg name="conveyor" default="true" doc="Spawn the CT6030 conveyor model and draw it in RViz" />
+  <arg name="conveyor_x" default="0.70" doc="Conveyor footprint centre x in the base frame [m]" />
+  <arg name="conveyor_y" default="0.0" doc="Conveyor footprint centre y in the base frame [m]" />
+  <arg name="conveyor_yaw" default="1.5708" doc="Belt axis yaw in the base frame [rad] (pi/2: across the robot)" />
+
   <include file="$(find baxter_gazebo)/launch/baxter_world.launch">
     <arg name="paused" value="$(arg paused)" />
     <arg name="use_sim_time" value="$(arg use_sim_time)" />
@@ -40,13 +67,22 @@
     <arg name="debug" value="$(arg debug)" />
   </include>
 
+  <!-- The simulator's gravity emulation races with the spawn (see the script). -->
+  <node name="enforce_arm_gravity" pkg="baxter_mpc_controller" type="enforce_arm_gravity.py" output="screen" />
+
+  <!-- The conveyor model: origin on the ground, belt top at z = 0.75; Baxter's base is at
+       the world origin (spawned at z = 0.93), so base-frame x/y are world x/y. -->
+  <node if="$(arg conveyor)" name="conveyor_spawner" pkg="gazebo_ros" type="spawn_model"
+        respawn="false" output="screen"
+        args="-sdf -file $(find baxter_mpc_controller)/models/conveyor_ct6030/model.sdf -model conveyor_ct6030 -x $(arg conveyor_x) -y $(arg conveyor_y) -z 0 -Y $(arg conveyor_yaw)" />
+
+  <!-- Torque loop for the controlled arm (one of the two backends). -->
   <include if="$(eval arg('dynamics_backend') == 'lagrange_euler')"
            file="$(find baxter_dynamics)/launch/lagrange_euler.launch">
     <arg name="limb" value="$(arg limb)" />
     <arg name="s1_torque_max" value="$(arg sim_s1_torque_max)" />
     <arg name="s1_torque_min" value="$(arg sim_s1_torque_min)" />
   </include>
-
   <include if="$(eval arg('dynamics_backend') == 'kdl')"
            file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
     <arg name="limb" value="$(arg limb)" />
@@ -56,22 +92,67 @@
     <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
   </include>
 
-  <!-- Pure feedforward computed torque unless inner_pd is requested (gains from the yaml files). -->
-  <group unless="$(arg inner_pd)">
-    <rosparam param="robot/kdl_dynamics/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
-    <rosparam param="robot/kdl_dynamics/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
-    <rosparam param="robot/lagrange_euler/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
-    <rosparam param="robot/lagrange_euler/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
-  </group>
-
   <include file="$(find baxter_mpc_controller)/launch/mpc_controller.launch">
     <arg name="limb" value="$(arg limb)" />
     <arg name="solver_mode" value="$(arg solver_mode)" />
     <arg name="solver_backend" value="$(arg solver_backend)" />
     <arg name="mpc_rate_hz" value="$(arg mpc_rate_hz)" />
     <arg name="cycle_deadline_ms" value="$(arg cycle_deadline_ms)" />
+    <arg name="geometry" value="$(arg geometry)" />
+    <arg name="guard_mode" value="$(arg guard_mode)" />
+    <arg name="z_min" value="$(arg z_min)" />
   </include>
 
+  <node if="$(arg rviz)" name="collision_guard_rviz" pkg="rviz" type="rviz"
+        args="-d $(find baxter_mpc_controller)/config/collision_guard.rviz" />
+
+  <!-- Other arm: its own torque loop, MPC and reference sender (mirrored scenario, own seed). -->
+  <arg name="other_limb" value="$(eval 'right' if arg('limb') == 'left' else 'left')" />
+  <group if="$(arg both_arms)">
+    <include file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
+      <arg name="limb" value="$(arg other_limb)" />
+      <arg name="add_gravity_compensation" value="true" />
+      <arg name="compensate_urdf_damping" value="true" />
+      <arg name="aggregate_tip_subtree_inertia" value="true" />
+      <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
+    </include>
+    <include file="$(find baxter_mpc_controller)/launch/mpc_controller.launch">
+      <arg name="limb" value="$(arg other_limb)" />
+      <arg name="solver_mode" value="$(arg solver_mode)" />
+      <arg name="solver_backend" value="$(arg solver_backend)" />
+      <arg name="mpc_rate_hz" value="$(arg mpc_rate_hz)" />
+      <arg name="cycle_deadline_ms" value="$(arg cycle_deadline_ms)" />
+      <arg name="geometry" value="$(arg geometry)" />
+      <arg name="guard_mode" value="$(arg guard_mode)" />
+      <arg name="z_min" value="$(arg z_min)" />
+    </include>
+    <node if="$(arg send_references)"
+          name="mpc_sim_reference_sender_$(arg other_limb)"
+          pkg="baxter_mpc_controller"
+          type="send_sim_references.py"
+          output="screen"
+          args="--limb $(arg other_limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --scenario '$(arg scenario)' --z-min $(arg z_min) --seed 20260912" />
+  </group>
+
+  <!-- Parameter overrides that must come AFTER every rosparam load above: roslaunch
+       unrolls yaml files into leaf parameters and the last definition of a key wins, so a
+       <param> placed before an include that loads config.yaml / kdl_dynamics.yaml is
+       silently replaced by the yaml value. -->
+  <!-- Pure feedforward computed torque unless inner_pd is requested (kdl_dynamics.yaml and
+       the Lagrange-Euler yaml carry non-zero gains for the real robot). -->
+  <group unless="$(arg inner_pd)">
+    <rosparam param="robot/kdl_dynamics/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/kdl_dynamics/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+  </group>
+  <!-- Conveyor pose for the guard's RViz drawing (config.yaml holds the same defaults). -->
+  <param name="robot/geometry/conveyor/enabled" type="bool" value="$(arg conveyor)" />
+  <param name="robot/geometry/conveyor/x" type="double" value="$(arg conveyor_x)" />
+  <param name="robot/geometry/conveyor/y" type="double" value="$(arg conveyor_y)" />
+  <param name="robot/geometry/conveyor/yaw" type="double" value="$(arg conveyor_yaw)" />
+
+  <!-- Enable only once the simulated effort controller exists. -->
   <node if="$(arg auto_enable)"
         name="enable_simulated_baxter"
         pkg="baxter_mpc_controller"
@@ -86,6 +167,7 @@
         output="screen"
         args="--limb $(arg limb) --output $(arg diagnostics_file) --rate $(arg diagnostics_rate_hz)" />
 
+  <!-- Reference sender for the controlled arm; required=true ends the launch with the sequence. -->
   <group if="$(arg send_references)">
     <node unless="$(arg repeat_references)"
           name="mpc_sim_reference_sender"
@@ -93,12 +175,12 @@
           type="send_sim_references.py"
           output="screen"
           required="$(arg shutdown_after_references)"
-          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count)" />
+          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --scenario '$(arg scenario)' --z-min $(arg z_min)" />
     <node if="$(arg repeat_references)"
           name="mpc_sim_reference_sender"
           pkg="baxter_mpc_controller"
           type="send_sim_references.py"
           output="screen"
-          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --repeat" />
+          args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --scenario '$(arg scenario)' --z-min $(arg z_min) --repeat" />
   </group>
 </launch>

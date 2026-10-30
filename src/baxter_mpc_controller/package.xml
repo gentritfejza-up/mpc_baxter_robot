@@ -14,12 +14,22 @@
   <depend>roscpp</depend>
   <depend>std_msgs</depend>
   <depend>dynamic_reconfigure</depend>
+  <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <exec_depend>rviz</exec_depend>
+  <depend>kdl_parser</depend>
+  <depend>urdf</depend>
+  <depend>orocos_kdl</depend>
+  <depend>eigen</depend>
   <exec_depend>baxter_dynamics</exec_depend>
   <exec_depend>baxter_gazebo</exec_depend>
   <exec_depend>controller_manager_msgs</exec_depend>
   <exec_depend>rospy</exec_depend>
   <exec_depend>rosgraph_msgs</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
+
+  <test_depend>rostest</test_depend>
+  <test_depend>xacro</test_depend>
+  <test_depend>baxter_description</test_depend>
 
   <export>
   </export>

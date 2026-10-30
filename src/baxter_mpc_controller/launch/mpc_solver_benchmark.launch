@@ -1,11 +1,20 @@
 <launch>
-  <arg name="solver_backend" default="osqp" />
-  <arg name="solver_mode" default="qc" />
-  <arg name="mpc_rate_hz" default="50.0" />
-  <arg name="iterations" default="10000" />
-  <arg name="warmup_iterations" default="100" />
+  <!-- Offline solver benchmark (mpc_solver_benchmark): times the QP with the same
+       config.yaml/collision_geometry.yaml the controller loads. No robot or Gazebo needed;
+       the URDF comes from xacro. The node exits when done (required=true ends the launch). -->
+  <arg name="solver_backend" default="osqp" doc="Solver: osqp, qpoases, qrqp, ipqp, or ipopt" />
+  <arg name="solver_mode" default="qc" doc="MPC formulation: qc or time_scaling" />
+  <arg name="mpc_rate_hz" default="50.0" doc="MPC command update rate (sets the step length)" />
+  <arg name="iterations" default="10000" doc="Timed solves" />
+  <arg name="warmup_iterations" default="100" doc="Untimed solves before the measurement" />
+  <arg name="geometry" default="false" doc="Linearise and include the collision-guard rows" />
+  <arg name="simulate" default="false" doc="Advance the state along the plan each iteration" />
 
+  <param name="robot_description"
+         command="$(find xacro)/xacro $(find baxter_description)/urdf/baxter.urdf.xacro gazebo:=true left_electric_gripper:=true right_electric_gripper:=true" />
   <rosparam command="load" file="$(find baxter_mpc_controller)/config/config.yaml" />
+  <rosparam command="load" file="$(find baxter_mpc_controller)/config/collision_geometry.yaml" />
+  <param name="robot/geometry/enabled" type="bool" value="$(arg geometry)" />
   <param name="robot/solver_mode" value="$(arg solver_mode)" />
   <param name="robot/solver_backend" value="$(arg solver_backend)" />
   <param name="robot/control/mpc_rate_hz" value="$(arg mpc_rate_hz)" />
@@ -17,5 +26,7 @@
         output="screen">
     <param name="iterations" value="$(arg iterations)" />
     <param name="warmup_iterations" value="$(arg warmup_iterations)" />
+    <param name="geometry" type="bool" value="$(arg geometry)" />
+    <param name="simulate" type="bool" value="$(arg simulate)" />
   </node>
 </launch>

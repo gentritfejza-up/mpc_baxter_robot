@@ -1,0 +1,13 @@
+<launch>
+  <arg name="slack_weight" default="10000.0" doc="robot/geometry/slack_quadratic_weight under test" />
+  <rosparam command="load" file="$(find baxter_mpc_controller)/config/config.yaml" />
+  <param name="robot/geometry/slack_quadratic_weight" type="double" value="$(arg slack_weight)" />
+  <!-- Rows on positions only here; the approach-rate damper is validated in Gazebo. -->
+  <param name="robot/geometry/velocity_lookahead_sec" type="double" value="0.0" />
+  <param name="robot/solver_backend" value="osqp" />
+  <param name="robot/solver_mode" value="qc" />
+  <param name="robot/geometry/enabled" type="bool" value="true" />
+
+  <test test-name="mpc_geometry_rows_test" pkg="baxter_mpc_controller"
+        type="mpc_geometry_rows_test" time-limit="180.0" />
+</launch>

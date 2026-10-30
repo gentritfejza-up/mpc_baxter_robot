@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<!-- CT6030 conveyor (1500 x 250 x 750 mm, 190 mm belt). Model origin: ground level,
+     centre of the footprint; the belt runs along the model's x axis and its top
+     surface is at z = 0.750. Static: the belt does not move in simulation. -->
+<sdf version="1.6">
+  <model name="conveyor_ct6030">
+    <static>true</static>
+    <link name="frame">
+      <!-- top plate (belt bed) -->
+      <collision name="bed_collision">
+        <pose>0 0 0.730 0 0 0</pose>
+        <geometry><box><size>1.50 0.25 0.04</size></box></geometry>
+      </collision>
+      <visual name="bed_visual">
+        <pose>0 0 0.730 0 0 0</pose>
+        <geometry><box><size>1.50 0.25 0.04</size></box></geometry>
+        <material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.80 0.80 0.83 1</diffuse><specular>0.5 0.5 0.5 1</specular></material>
+      </visual>
+      <!-- belt surface, top at z = 0.750 -->
+      <visual name="belt_visual">
+        <pose>0 0 0.7505 0 0 0</pose>
+        <geometry><box><size>1.50 0.19 0.001</size></box></geometry>
+        <material><ambient>0.08 0.08 0.08 1</ambient><diffuse>0.10 0.10 0.10 1</diffuse></material>
+      </visual>
+      <!-- side rails -->
+      <visual name="rail_left">
+        <pose>0 0.125 0.755 0 0 0</pose>
+        <geometry><box><size>1.50 0.012 0.03</size></box></geometry>
+        <material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.80 0.80 0.83 1</diffuse></material>
+      </visual>
+      <visual name="rail_right">
+        <pose>0 -0.125 0.755 0 0 0</pose>
+        <geometry><box><size>1.50 0.012 0.03</size></box></geometry>
+        <material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.80 0.80 0.83 1</diffuse></material>
+      </visual>
+      <!-- drive and tail rollers -->
+      <visual name="roller_head">
+        <pose>0.73 0 0.725 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.025</radius><length>0.22</length></cylinder></geometry>
+        <material><ambient>0.6 0.6 0.62 1</ambient><diffuse>0.7 0.7 0.72 1</diffuse></material>
+      </visual>
+      <visual name="roller_tail">
+        <pose>-0.73 0 0.725 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.025</radius><length>0.22</length></cylinder></geometry>
+        <material><ambient>0.6 0.6 0.62 1</ambient><diffuse>0.7 0.7 0.72 1</diffuse></material>
+      </visual>
+      <!-- motor under the head end -->
+      <visual name="motor">
+        <pose>0.62 0 0.62 0 0 0</pose>
+        <geometry><box><size>0.14 0.14 0.16</size></box></geometry>
+        <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material>
+      </visual>
+      <collision name="motor_collision">
+        <pose>0.62 0 0.62 0 0 0</pose>
+        <geometry><box><size>0.14 0.14 0.16</size></box></geometry>
+      </collision>
+      <!-- four legs with feet, cross braces -->
+      <visual name="leg_1"><pose>0.60 0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+      <visual name="leg_2"><pose>0.60 -0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+      <visual name="leg_3"><pose>-0.60 0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+      <visual name="leg_4"><pose>-0.60 -0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+      <collision name="leg_1_collision"><pose>0.60 0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry></collision>
+      <collision name="leg_2_collision"><pose>0.60 -0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry></collision>
+      <collision name="leg_3_collision"><pose>-0.60 0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry></collision>
+      <collision name="leg_4_collision"><pose>-0.60 -0.10 0.355 0 0 0</pose><geometry><box><size>0.04 0.04 0.71</size></box></geometry></collision>
+      <visual name="foot_1"><pose>0.60 0.10 0.01 0 0 0</pose><geometry><box><size>0.10 0.26 0.02</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+      <visual name="foot_2"><pose>-0.60 0.10 0.01 0 0 0</pose><geometry><box><size>0.10 0.26 0.02</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+      <visual name="brace_1"><pose>0.60 0 0.30 0 0 0</pose><geometry><box><size>0.03 0.20 0.03</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+      <visual name="brace_2"><pose>-0.60 0 0.30 0 0 0</pose><geometry><box><size>0.03 0.20 0.03</size></box></geometry><material><ambient>0.75 0.75 0.78 1</ambient><diffuse>0.8 0.8 0.83 1</diffuse></material></visual>
+    </link>
+  </model>
+</sdf>

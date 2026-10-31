@@ -1,0 +1,49 @@
+<launch>
+  <!-- Two-arm pick-and-place on the conveyor: cuboids move along the belt, each arm grabs
+       the ones passing its zone and drops them into a raised box behind its shoulder.
+       Builds on baxter_mpc.launch with both arms and without the reference sender. -->
+  <arg name="gui" default="true" doc="Open the Gazebo client (false: headless)" />
+  <arg name="rviz" default="true" doc="Open RViz with the collision-guard markers" />
+  <arg name="belt_speed" default="0.05" doc="belt speed [m/s] along +y (right to left)" />
+  <arg name="objects" default="6" doc="Number of cuboids cycling on the belt" />
+  <arg name="duration" default="120.0" doc="Demo duration [s]; the launch ends with the demo" />
+  <arg name="inner_pd" default="true"
+       doc="Computed-torque PD around the MPC trajectory in the torque loops. On for the demo: the held
+            cuboid is an unmodelled load, and the recorded results were obtained with the PD on." />
+  <arg name="diagnostics_file" default="/workspace/validation/pick_and_place.txt"
+       doc="Diagnostics JSON-lines file (left arm)" />
+  <arg name="dynamics_backend" default="kdl"
+       doc="Torque-loop model for both arms: kdl (URDF) or lagrange_euler (DH table)" />
+
+  <include file="$(find simulator_demo)/launch/baxter_mpc.launch">
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="headless" value="$(eval not arg('gui'))" />
+    <arg name="rviz" value="$(arg rviz)" />
+    <arg name="both_arms" value="true" />
+    <arg name="inner_pd" value="$(arg inner_pd)" />
+    <arg name="dynamics_backend" value="$(arg dynamics_backend)" />
+    <arg name="send_references" value="false" />
+    <arg name="diagnostics_file" value="$(arg diagnostics_file)" />
+  </include>
+
+  <!-- No extra idle time after the enable: the MPC drives the arms home itself (the demo
+       script's teleport-home option is off by default). -->
+  <param name="robot/control/enable_delay_sec" type="double" value="0.0" />
+  <!-- Picking from the belt: the fingertips may come down to 2.5 cm above it (the grasp
+       target is 5.5 cm, which the 5 cm default margin plus the horizon growth blocked;
+       the margin must stay above guard.margin + guard.worsening_tolerance = 0.02). -->
+  <param name="robot/geometry/floor_margin" type="double" value="0.025" />
+  <param name="robot/geometry/margin_growth_per_sec" type="double" value="0.01" />
+  <!-- Replaces the body keep-outs with the demo set (adds the drop boxes and their columns). -->
+  <rosparam command="load" file="$(find simulator_demo)/config/collision_geometry_demo.yaml" />
+
+  <!-- Drop boxes at base-frame (-0.10, +/-0.90); the same positions are hard-coded in the
+       demo script (drop spots) and in collision_geometry_demo.yaml (keep-outs). -->
+  <node name="drop_box_left_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-sdf -file $(find simulator_demo)/models/drop_box/model.sdf -model drop_box_left -x -0.10 -y 0.90 -z 0" />
+  <node name="drop_box_right_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
+        args="-sdf -file $(find simulator_demo)/models/drop_box/model.sdf -model drop_box_right -x -0.10 -y -0.90 -z 0" />
+  <node name="pick_and_place_demo" pkg="simulator_demo" type="pick_and_place_demo.py"
+        output="screen" required="true"
+        args="--belt-speed $(arg belt_speed) --objects $(arg objects) --duration $(arg duration) --cuboid-sdf $(find simulator_demo)/models/pick_cuboid/model.sdf" />
+</launch>

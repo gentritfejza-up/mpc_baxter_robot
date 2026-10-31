@@ -1,0 +1,32 @@
+<launch>
+  <!-- One MPC node (run_mpc) for one arm. Loads config.yaml and the collision geometry,
+       then overrides the keys the launch arguments control. Included by baxter_mpc.launch
+       once per arm; usable alone against a running robot or simulator. -->
+  <arg name="limb" default="left" doc="Which limb to control: left or right" />
+  <arg name="solver_mode" default="qc" doc="MPC formulation: qc or time_scaling" />
+  <arg name="solver_backend" default="osqp" doc="Solver: osqp, qpoases, qrqp, ipqp, or ipopt" />
+  <arg name="mpc_rate_hz" default="50.0" doc="MPC command update rate" />
+  <arg name="cycle_deadline_ms" default="20.0" doc="Maximum state-to-command latency" />
+  <arg name="geometry" default="true" doc="Enable the collision guard (z floor, body, other arm)" />
+  <arg name="guard_mode" default="reject" doc="Collision guard: reject | warn | off" />
+  <arg name="z_min" default="-0.80"
+       doc="Floor height in the base frame [m]: -0.80 is the ground; baxter_mpc.launch passes the belt top" />
+
+  <rosparam command="load"
+            file="$(find baxter_mpc_controller)/config/config.yaml" />
+  <rosparam command="load"
+            file="$(find baxter_mpc_controller)/config/collision_geometry.yaml" />
+  <param name="robot/geometry/enabled" type="bool" value="$(arg geometry)" />
+  <param name="robot/geometry/guard/mode" value="$(arg guard_mode)" />
+  <param name="robot/geometry/z_min" type="double" value="$(arg z_min)" />
+  <param name="robot/solver_mode" value="$(arg solver_mode)" />
+  <param name="robot/solver_backend" value="$(arg solver_backend)" />
+  <param name="robot/control/mpc_rate_hz" value="$(arg mpc_rate_hz)" />
+  <param name="robot/control/cycle_deadline_ms" value="$(arg cycle_deadline_ms)" />
+
+  <node name="mpc_controller_node_$(arg limb)"
+        pkg="baxter_mpc_controller"
+        type="run_mpc"
+        output="screen"
+        args="$(arg limb)" />
+</launch>

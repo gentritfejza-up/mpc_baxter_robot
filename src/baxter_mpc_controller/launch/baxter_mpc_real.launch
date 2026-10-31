@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Real Baxter: both arms under MPC + computed torque, no simulator.
+
+     Differences from baxter_mpc.launch (the Gazebo stack):
+     - no Gazebo, no gravity work-around, no simulated enable script: the robot is enabled with
+       the SDK tool (baxter_tools enable_robot.py -e) once the controllers are up;
+     - the torque loop does NOT add gravity compensation: the real Baxter adds its own gravity
+       compensation torques in torque mode (add_gravity_compensation:=false);
+     - the URDF s1 effort limit (50 Nm) is kept (no simulated override);
+     - the computed-torque inner PD is ON (inner_pd:=true): the model is approximate on the
+       real robot, in Gazebo the plant is the model itself.
+     The robot must start in its untucked home pose (it does after `tuck_arms.py -u`): the
+     collision guard's conveyor floor arms itself when the arm reaches home.
+     Set ROS_MASTER_URI to the robot (and ROS_IP to this machine) before launching. -->
+<launch>
+  <arg name="both_arms" default="true" doc="Run the torque loop and MPC for both arms" />
+  <arg name="limb" default="left" doc="Arm to control when both_arms is false" />
+  <arg name="auto_enable" default="true" doc="Enable the robot with the SDK tool after launch" />
+  <arg name="inner_pd" default="true" doc="Computed-torque PD around the MPC trajectory" />
+  <arg name="dynamics_backend" default="kdl"
+       doc="Torque-loop model: kdl (from the robot's URDF) or lagrange_euler (DH table)" />
+  <arg name="geometry" default="true" doc="Enable the MPC collision guard" />
+  <arg name="guard_mode" default="reject" doc="Collision guard: reject | warn | off" />
+  <arg name="rviz" default="false" doc="Open RViz with the collision-guard markers" />
+  <arg name="solver_backend" default="osqp" doc="QP solver" />
+  <arg name="mpc_rate_hz" default="50.0" doc="MPC command update rate" />
+  <arg name="cycle_deadline_ms" default="20.0" doc="Maximum state-to-command latency" />
+  <!-- CT6030 belt top 0.75 m above the ground, Baxter base 0.93 m above it (measure on site). -->
+  <arg name="z_min" default="-0.18" doc="Conveyor surface height in the base frame [m]" />
+  <arg name="conveyor_x" default="0.70" doc="Conveyor footprint centre x in the base frame [m]" />
+  <arg name="conveyor_y" default="0.0" doc="Conveyor footprint centre y in the base frame [m]" />
+  <arg name="conveyor_yaw" default="1.5708" doc="Belt axis yaw in the base frame [rad]" />
+  <arg name="record_diagnostics" default="true" doc="Write synchronized MPC/KDL diagnostics" />
+  <arg name="diagnostics_file" default="/tmp/baxter_mpc_diagnostics_real.txt" doc="JSON-lines output" />
+
+  <arg name="other_limb" value="$(eval 'right' if arg('limb') == 'left' else 'left')" />
+
+  <!-- Torque loops: gravity comes from the robot, hardware effort limits, no damping term. -->
+  <arg name="torque_launch"
+       value="$(eval find('baxter_dynamics') + '/launch/lagrange_euler.launch' if arg('dynamics_backend') == 'lagrange_euler' else find('baxter_kdl_dynamics') + '/launch/kdl_inverse_dynamics.launch')" />
+  <include file="$(arg torque_launch)">
+    <arg name="limb" value="$(arg limb)" />
+    <arg name="add_gravity_compensation" value="false" />
+    <arg name="compensate_viscous_damping" value="false" />
+    <arg name="s1_torque_limit_override" value="-1.0" />
+  </include>
+  <include if="$(arg both_arms)" file="$(arg torque_launch)">
+    <arg name="limb" value="$(arg other_limb)" />
+    <arg name="add_gravity_compensation" value="false" />
+    <arg name="compensate_viscous_damping" value="false" />
+    <arg name="s1_torque_limit_override" value="-1.0" />
+  </include>
+  <group unless="$(arg inner_pd)">
+    <rosparam param="robot/kdl_dynamics/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/kdl_dynamics/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+  </group>
+
+  <!-- MPC nodes. -->
+  <include file="$(find baxter_mpc_controller)/launch/mpc_controller.launch">
+    <arg name="limb" value="$(arg limb)" />
+    <arg name="solver_backend" value="$(arg solver_backend)" />
+    <arg name="mpc_rate_hz" value="$(arg mpc_rate_hz)" />
+    <arg name="cycle_deadline_ms" value="$(arg cycle_deadline_ms)" />
+    <arg name="geometry" value="$(arg geometry)" />
+    <arg name="guard_mode" value="$(arg guard_mode)" />
+    <arg name="z_min" value="$(arg z_min)" />
+  </include>
+  <include if="$(arg both_arms)" file="$(find baxter_mpc_controller)/launch/mpc_controller.launch">
+    <arg name="limb" value="$(arg other_limb)" />
+    <arg name="solver_backend" value="$(arg solver_backend)" />
+    <arg name="mpc_rate_hz" value="$(arg mpc_rate_hz)" />
+    <arg name="cycle_deadline_ms" value="$(arg cycle_deadline_ms)" />
+    <arg name="geometry" value="$(arg geometry)" />
+    <arg name="guard_mode" value="$(arg guard_mode)" />
+    <arg name="z_min" value="$(arg z_min)" />
+  </include>
+
+  <!-- Conveyor pose for the RViz markers (the floor constraint itself only needs z_min).
+       Placed after every include: the last definition of a parameter wins, and
+       mpc_controller.launch reloads config.yaml with the default conveyor pose. -->
+  <param name="robot/geometry/conveyor/enabled" type="bool" value="true" />
+  <param name="robot/geometry/conveyor/x" type="double" value="$(arg conveyor_x)" />
+  <param name="robot/geometry/conveyor/y" type="double" value="$(arg conveyor_y)" />
+  <param name="robot/geometry/conveyor/yaw" type="double" value="$(arg conveyor_yaw)" />
+
+  <node if="$(arg auto_enable)" name="enable_baxter" pkg="baxter_tools" type="enable_robot.py"
+        output="screen" args="-e" />
+
+  <node if="$(arg record_diagnostics)" name="baxter_control_diagnostics_recorder"
+        pkg="baxter_mpc_controller" type="record_control_diagnostics.py" output="screen"
+        args="--limb $(arg limb) --output $(arg diagnostics_file) --rate 20.0" />
+
+  <node if="$(arg rviz)" name="collision_guard_rviz" pkg="rviz" type="rviz" output="screen"
+        args="-d $(find baxter_mpc_controller)/config/collision_guard.rviz" />
+</launch>

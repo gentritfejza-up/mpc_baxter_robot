@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- Pick-demo cuboid: 30 x 30 x 100 mm, 60 g, high friction so the simulated
+     electric gripper (42 mm opening) holds it. Origin at the bottom centre. -->
+<sdf version="1.6">
+  <model name="pick_cuboid">
+    <link name="body">
+      <pose>0 0 0.05 0 0 0</pose>
+      <inertial>
+        <mass>0.06</mass>
+        <inertia><ixx>5.45e-5</ixx><iyy>5.45e-5</iyy><izz>9.0e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><box><size>0.03 0.03 0.10</size></box></geometry>
+        <surface>
+          <friction><ode><mu>1.5</mu><mu2>1.5</mu2></ode></friction>
+          <contact><ode><kp>1e6</kp><kd>100</kd><min_depth>0.001</min_depth><max_vel>0.1</max_vel></ode></contact>
+        </surface>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.03 0.03 0.10</size></box></geometry>
+        <material><ambient>0.1 0.5 0.9 1</ambient><diffuse>0.2 0.6 1.0 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

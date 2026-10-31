@@ -1,305 +1,323 @@
 #include "baxter_interface_cpp/limb.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <string>
 #include <unordered_map>
 
-Limb::Limb(const std::string& limb_name) : name(limb_name) {
-  std::string ns = "/robot/limb/" + limb_name + "/";
+namespace {
 
-  joint_names_["left"] = {
-      "left_s0", "left_s1", "left_e0", "left_e1", "left_w0", "left_w1", "left_w2"};
-  joint_names_["right"] = {
-      "right_s0", "right_s1", "right_e0", "right_e1", "right_w0", "right_w1", "right_w2"};
+/// Joint angle tolerance of the SDK's move_to_joint_positions [rad] (0.5 deg).
+constexpr double kJointAngleToleranceRad = 0.008726646;
+/// Republish rate of blocking position moves [Hz], matching the Python SDK.
+constexpr double kPositionCommandRateHz = 100.0;
 
-  pub_joint_cmd_ = nh_.advertise<baxter_core_msgs::JointCommand>(ns + "joint_command", 1);
-  pub_speed_ratio_ = nh_.advertise<std_msgs::Float64>(ns + "set_speed_ratio", 10, true);
-  pub_joint_cmd_timeout_ = nh_.advertise<std_msgs::Float64>(ns + "joint_command_timeout", 10, true);
-  pub_acceleration_cmd_ =
-      nh_.advertise<baxter_core_msgs::AccelerationCommand>(ns + "acceleration_command", 1);
-  pub_acceleration_max_cmd_ =
-      nh_.advertise<baxter_core_msgs::AccelerationMax>(ns + "acceleration_max_command", 1, true);
-  pub_acceleration_min_cmd_ =
-      nh_.advertise<baxter_core_msgs::AccelerationMin>(ns + "acceleration_min_command", 1, true);
-  pub_ref_angles_ =
-      nh_.advertise<baxter_core_msgs::ReferentJointAngles>(ns + "referent_joint_angles", 1, true);
-
-  sub_joint_state_ = nh_.subscribe("/robot/joint_states", 1, &Limb::onJointStates, this);
-  sub_endpoint_state_ = nh_.subscribe(ns + "endpoint_state", 1, &Limb::onEndpointStates, this);
-  sub_acceleration_cmd_ =
-      nh_.subscribe(ns + "acceleration_command", 1, &Limb::onJointAccelerations, this);
-  sub_acceleration_max_cmd_ =
-      nh_.subscribe(ns + "acceleration_max_command", 1, &Limb::onJointAccelerationsMax, this);
-  sub_acceleration_min_cmd_ =
-      nh_.subscribe(ns + "acceleration_min_command", 1, &Limb::onJointAccelerationsMin, this);
-  sub_ref_angles_ =
-      nh_.subscribe(ns + "referent_joint_angles", 1, &Limb::onJointReferentAngles, this);
-  gravity_compensation_ =
-      nh_.subscribe(ns + "gravity_compensation_torques", 1, &Limb::onGravityCompensation, this);
-
+std::vector<std::string> armJointNames(const std::string& limb_name) {
+  return {limb_name + "_s0", limb_name + "_s1", limb_name + "_e0", limb_name + "_e1",
+          limb_name + "_w0", limb_name + "_w1", limb_name + "_w2"};
 }
 
-void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (size_t i = 0; i < msg->name.size(); ++i) {
-    if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->name[i]) !=
-        joint_names_[name].end()) {
-      if (i < msg->position.size()) {
-        joint_angle_[msg->name[i]] = msg->position[i];
-      }
-      if (i < msg->velocity.size()) {
-        joint_velocity_[msg->name[i]] = msg->velocity[i];
-      }
-      if (i < msg->effort.size()) {
-        joint_effort_[msg->name[i]] = msg->effort[i];
-      }
+}  // namespace
+
+Limb::Limb(const std::string& limb_name)
+    : limb_name_(limb_name), joint_names_(armJointNames(limb_name)) {
+  const std::string limb_namespace = "/robot/limb/" + limb_name + "/";
+
+  joint_command_publisher_ =
+      nh_.advertise<baxter_core_msgs::JointCommand>(limb_namespace + "joint_command", 1);
+  speed_ratio_publisher_ =
+      nh_.advertise<std_msgs::Float64>(limb_namespace + "set_speed_ratio", 10, true);
+  command_timeout_publisher_ =
+      nh_.advertise<std_msgs::Float64>(limb_namespace + "joint_command_timeout", 10, true);
+  acceleration_command_publisher_ = nh_.advertise<baxter_core_msgs::AccelerationCommand>(
+      limb_namespace + "acceleration_command", 1);
+  acceleration_max_publisher_ = nh_.advertise<baxter_core_msgs::AccelerationMax>(
+      limb_namespace + "acceleration_max_command", 1, true);
+  acceleration_min_publisher_ = nh_.advertise<baxter_core_msgs::AccelerationMin>(
+      limb_namespace + "acceleration_min_command", 1, true);
+  referent_angles_publisher_ = nh_.advertise<baxter_core_msgs::ReferentJointAngles>(
+      limb_namespace + "referent_joint_angles", 1, true);
+
+  joint_state_subscriber_ = nh_.subscribe("/robot/joint_states", 1, &Limb::onJointStates, this);
+  endpoint_state_subscriber_ =
+      nh_.subscribe(limb_namespace + "endpoint_state", 1, &Limb::onEndpointState, this);
+  acceleration_command_subscriber_ = nh_.subscribe(limb_namespace + "acceleration_command", 1,
+                                                   &Limb::onAccelerationCommand, this);
+  acceleration_max_subscriber_ = nh_.subscribe(limb_namespace + "acceleration_max_command", 1,
+                                               &Limb::onAccelerationMax, this);
+  acceleration_min_subscriber_ = nh_.subscribe(limb_namespace + "acceleration_min_command", 1,
+                                               &Limb::onAccelerationMin, this);
+  referent_angles_subscriber_ = nh_.subscribe(limb_namespace + "referent_joint_angles", 1,
+                                              &Limb::onReferentJointAngles, this);
+  sea_joint_state_subscriber_ = nh_.subscribe(limb_namespace + "gravity_compensation_torques", 1,
+                                              &Limb::onSeaJointState, this);
+}
+
+bool Limb::isLimbJoint(const std::string& joint) const {
+  return std::find(joint_names_.begin(), joint_names_.end(), joint) != joint_names_.end();
+}
+
+void Limb::onJointStates(const sensor_msgs::JointState::ConstPtr& message) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  // /robot/joint_states carries every Baxter joint; keep this arm's seven.
+  for (std::size_t index = 0; index < message->name.size(); ++index) {
+    const std::string& joint = message->name[index];
+    if (!isLimbJoint(joint)) continue;
+    if (index < message->position.size()) joint_angles_[joint] = message->position[index];
+    if (index < message->velocity.size()) joint_velocities_[joint] = message->velocity[index];
+    if (index < message->effort.size()) joint_efforts_[joint] = message->effort[index];
+  }
+  last_joint_state_received_at_ = ros::WallTime::now();
+  last_joint_state_stamp_ =
+      message->header.stamp.isZero() ? ros::Time::now() : message->header.stamp;
+}
+
+void Limb::onReferentJointAngles(const baxter_core_msgs::ReferentJointAngles::ConstPtr& message) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  for (std::size_t index = 0; index < message->joint_names.size(); ++index) {
+    const std::string& joint = message->joint_names[index];
+    if (isLimbJoint(joint) && index < message->angles.size()) {
+      referent_angles_[joint] = message->angles[index];
     }
   }
 }
 
-void Limb::onJointReferentAngles(const baxter_core_msgs::ReferentJointAngles::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (size_t i = 0; i < msg->joint_names.size(); ++i) {
-    if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
-        joint_names_[name].end()) {
-      if (i < msg->angles.size()) {
-        referent_angles_[msg->joint_names[i]] = msg->angles[i];
-      }
-    }
-  }
+void Limb::onEndpointState(const baxter_core_msgs::EndpointState::ConstPtr& message) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  endpoint_position_["position"] =
+      Point{message->pose.position.x, message->pose.position.y, message->pose.position.z};
+  endpoint_orientation_["orientation"] =
+      Quaternion{message->pose.orientation.x, message->pose.orientation.y,
+                 message->pose.orientation.z, message->pose.orientation.w};
+  endpoint_velocity_["linear"] =
+      Point{message->twist.linear.x, message->twist.linear.y, message->twist.linear.z};
+  endpoint_velocity_["angular"] =
+      Point{message->twist.angular.x, message->twist.angular.y, message->twist.angular.z};
+  endpoint_effort_["force"] =
+      Point{message->wrench.force.x, message->wrench.force.y, message->wrench.force.z};
+  endpoint_effort_["torque"] =
+      Point{message->wrench.torque.x, message->wrench.torque.y, message->wrench.torque.z};
 }
 
-void Limb::onEndpointStates(const baxter_core_msgs::EndpointState::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  cartesian_pose_["position"] =
-      Point{msg->pose.position.x, msg->pose.position.y, msg->pose.position.z};
-  cartesian_orientation_["orientation"] = Quaternion{msg->pose.orientation.x,
-                                                     msg->pose.orientation.y,
-                                                     msg->pose.orientation.z,
-                                                     msg->pose.orientation.w};
-
-  cartesian_velocity_["linear"] =
-      Point{msg->twist.linear.x, msg->twist.linear.y, msg->twist.linear.z};
-  cartesian_velocity_["angular"] =
-      Point{msg->twist.angular.x, msg->twist.angular.y, msg->twist.angular.z};
-
-  cartesian_effort_["force"] = Point{msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z};
-  cartesian_effort_["torque"] =
-      Point{msg->wrench.torque.x, msg->wrench.torque.y, msg->wrench.torque.z};
-}
-
-void Limb::onJointAccelerations(const baxter_core_msgs::AccelerationCommand::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
+void Limb::onAccelerationCommand(
+    const baxter_core_msgs::AccelerationCommand::ConstPtr& message) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   bool received_acceleration = false;
-  for (size_t i = 0; i < msg->joint_names.size(); ++i) {
-    if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
-        joint_names_[name].end()) {
-      if (i < msg->accelerations.size()) {
-        joint_acceleration_[msg->joint_names[i]] = msg->accelerations[i];
-        received_acceleration = true;
-      }
-      if (i < msg->velocities.size()) {
-        joint_velocity_ref_[msg->joint_names[i]] = msg->velocities[i];
-      }
-      if (i < msg->angles.size()) {
-        joint_angle_ref_[msg->joint_names[i]] = msg->angles[i];
-      }
+  for (std::size_t index = 0; index < message->joint_names.size(); ++index) {
+    const std::string& joint = message->joint_names[index];
+    if (!isLimbJoint(joint)) continue;
+    if (index < message->accelerations.size()) {
+      reference_accelerations_[joint] = message->accelerations[index];
+      received_acceleration = true;
+    }
+    if (index < message->velocities.size()) {
+      reference_velocities_[joint] = message->velocities[index];
+    }
+    if (index < message->angles.size()) {
+      reference_angles_[joint] = message->angles[index];
     }
   }
   if (received_acceleration) {
-    last_acceleration_ref_stamp_ = ros::Time::now();
+    last_acceleration_reference_stamp_ = ros::Time::now();
   }
 }
 
-void Limb::onGravityCompensation(const baxter_core_msgs::SEAJointState::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (size_t i = 0; i < msg->name.size(); ++i) {
-    if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->name[i]) ==
-        joint_names_[name].end()) {
-      continue;
+void Limb::onSeaJointState(const baxter_core_msgs::SEAJointState::ConstPtr& message) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  for (std::size_t index = 0; index < message->name.size(); ++index) {
+    const std::string& joint = message->name[index];
+    if (!isLimbJoint(joint)) continue;
+    if (index < message->commanded_effort.size()) {
+      commanded_efforts_[joint] = message->commanded_effort[index];
     }
-    if (i < msg->commanded_effort.size()) {
-      commanded_effort_[msg->name[i]] = msg->commanded_effort[i];
+    if (index < message->actual_effort.size()) {
+      actual_efforts_[joint] = message->actual_effort[index];
     }
-    if (i < msg->actual_effort.size()) {
-      actual_effort_[msg->name[i]] = msg->actual_effort[i];
-    }
-    if (i < msg->gravity_model_effort.size()) {
-      gravity_model_effort_[msg->name[i]] = msg->gravity_model_effort[i];
-    }
-  }
-}
-
-double Limb::accelerationRefAgeSec() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (last_acceleration_ref_stamp_.isZero()) {
-    return std::numeric_limits<double>::max();
-  }
-  return (ros::Time::now() - last_acceleration_ref_stamp_).toSec();
-}
-
-void Limb::onJointAccelerationsMax(const baxter_core_msgs::AccelerationMax::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (size_t i = 0; i < msg->joint_names.size(); ++i) {
-    if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
-        joint_names_[name].end()) {
-      if (i < msg->accelerations.size()) {
-        joint_acceleration_max_[msg->joint_names[i]] = msg->accelerations[i];
-      }
+    if (index < message->gravity_model_effort.size()) {
+      gravity_model_efforts_[joint] = message->gravity_model_effort[index];
     }
   }
 }
 
-void Limb::onJointAccelerationsMin(const baxter_core_msgs::AccelerationMin::ConstPtr& msg) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  for (size_t i = 0; i < msg->joint_names.size(); ++i) {
-    if (std::find(joint_names_[name].begin(), joint_names_[name].end(), msg->joint_names[i]) !=
-        joint_names_[name].end()) {
-      if (i < msg->accelerations.size()) {
-        joint_acceleration_min_[msg->joint_names[i]] = msg->accelerations[i];
-      }
+void Limb::onAccelerationMax(const baxter_core_msgs::AccelerationMax::ConstPtr& message) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  for (std::size_t index = 0; index < message->joint_names.size(); ++index) {
+    const std::string& joint = message->joint_names[index];
+    if (isLimbJoint(joint) && index < message->accelerations.size()) {
+      max_accelerations_[joint] = message->accelerations[index];
     }
   }
 }
 
-std::vector<std::string> Limb::jointNames() const {
-  return joint_names_.at(name);
+void Limb::onAccelerationMin(const baxter_core_msgs::AccelerationMin::ConstPtr& message) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  for (std::size_t index = 0; index < message->joint_names.size(); ++index) {
+    const std::string& joint = message->joint_names[index];
+    if (isLimbJoint(joint) && index < message->accelerations.size()) {
+      min_accelerations_[joint] = message->accelerations[index];
+    }
+  }
 }
+
+std::vector<std::string> Limb::jointNames() const { return joint_names_; }
 
 double Limb::jointAngle(const std::string& joint) const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_angle_.at(joint);
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return joint_angles_.at(joint);
 }
 
 std::unordered_map<std::string, double> Limb::jointAngles() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_angle_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return joint_angles_;
 }
 
 std::unordered_map<std::string, double> Limb::jointVelocities() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_velocity_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return joint_velocities_;
+}
+
+JointStateSnapshot Limb::jointStateSnapshot() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return JointStateSnapshot{joint_angles_, joint_velocities_, last_joint_state_received_at_,
+                            last_joint_state_stamp_};
 }
 
 std::unordered_map<std::string, double> Limb::jointEfforts() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_effort_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return joint_efforts_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAccelerationsRef() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_acceleration_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return reference_accelerations_;
 }
 
 std::unordered_map<std::string, double> Limb::jointVelocitiesRef() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_velocity_ref_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return reference_velocities_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAnglesRef() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_angle_ref_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return reference_angles_;
+}
+
+double Limb::accelerationRefAgeSec() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (last_acceleration_reference_stamp_.isZero()) {
+    return std::numeric_limits<double>::max();
+  }
+  return (ros::Time::now() - last_acceleration_reference_stamp_).toSec();
+}
+
+AccelerationReferenceSnapshot Limb::accelerationReferenceSnapshot() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  const double age_sec = last_acceleration_reference_stamp_.isZero()
+                             ? std::numeric_limits<double>::max()
+                             : (ros::Time::now() - last_acceleration_reference_stamp_).toSec();
+  return AccelerationReferenceSnapshot{reference_accelerations_, reference_velocities_,
+                                       reference_angles_, age_sec};
 }
 
 std::unordered_map<std::string, double> Limb::jointAccelerationsMax() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_acceleration_max_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return max_accelerations_;
 }
 
 std::unordered_map<std::string, double> Limb::jointAccelerationsMin() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return joint_acceleration_min_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return min_accelerations_;
 }
 
 std::unordered_map<std::string, double> Limb::referentJointAngles() const {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::lock_guard<std::mutex> lock(state_mutex_);
   return referent_angles_;
 }
 
 std::unordered_map<std::string, double> Limb::commandedEffort() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return commanded_effort_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return commanded_efforts_;
 }
 
 std::unordered_map<std::string, double> Limb::actualEffort() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return actual_effort_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return actual_efforts_;
 }
 
 std::unordered_map<std::string, double> Limb::gravityModelEffort() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return gravity_model_effort_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return gravity_model_efforts_;
 }
 
 void Limb::setJointPositions(const std::unordered_map<std::string, double>& positions) {
-  baxter_core_msgs::JointCommand cmd_msg;
-  cmd_msg.mode = baxter_core_msgs::JointCommand::POSITION_MODE;
-  for (const auto& joint : positions) {
-    cmd_msg.names.push_back(joint.first);
-    cmd_msg.command.push_back(joint.second);
+  baxter_core_msgs::JointCommand command;
+  command.mode = baxter_core_msgs::JointCommand::POSITION_MODE;
+  for (const auto& [joint, position] : positions) {
+    command.names.push_back(joint);
+    command.command.push_back(position);
   }
-  pub_joint_cmd_.publish(cmd_msg);
+  joint_command_publisher_.publish(command);
 }
 
 void Limb::setJointAccelerations(const std::unordered_map<std::string, double>& accelerations,
                                  const std::unordered_map<std::string, double>& velocities,
                                  const std::unordered_map<std::string, double>& angles) {
-  baxter_core_msgs::AccelerationCommand cmd_msg;
-  for (const auto& joint : joint_names_[name]) {
-    cmd_msg.joint_names.push_back(joint);
-    cmd_msg.accelerations.push_back(accelerations.at(joint));
-    cmd_msg.velocities.push_back(velocities.at(joint));
-    cmd_msg.angles.push_back(angles.at(joint));
+  baxter_core_msgs::AccelerationCommand command;
+  for (const std::string& joint : joint_names_) {
+    command.joint_names.push_back(joint);
+    command.accelerations.push_back(accelerations.at(joint));
+    command.velocities.push_back(velocities.at(joint));
+    command.angles.push_back(angles.at(joint));
   }
-  pub_acceleration_cmd_.publish(cmd_msg);
+  acceleration_command_publisher_.publish(command);
 }
 
 void Limb::setReferentAngles(const std::unordered_map<std::string, double>& referent_angles) {
-  baxter_core_msgs::ReferentJointAngles cmd_msg;
-  for (const auto& joint : joint_names_[name]) {
-    cmd_msg.joint_names.push_back(joint);
-    cmd_msg.angles.push_back(referent_angles.at(joint));
+  baxter_core_msgs::ReferentJointAngles command;
+  for (const std::string& joint : joint_names_) {
+    command.joint_names.push_back(joint);
+    command.angles.push_back(referent_angles.at(joint));
   }
-  pub_ref_angles_.publish(cmd_msg);
+  referent_angles_publisher_.publish(command);
 }
 
 void Limb::setJointAccelerationsMax(const std::unordered_map<std::string, double>& accelerations) {
-  baxter_core_msgs::AccelerationMax cmd_msg;
-  for (const auto& joint : accelerations) {
-    cmd_msg.joint_names.push_back(joint.first);
-    cmd_msg.accelerations.push_back(joint.second);
+  baxter_core_msgs::AccelerationMax command;
+  for (const auto& [joint, acceleration] : accelerations) {
+    command.joint_names.push_back(joint);
+    command.accelerations.push_back(acceleration);
   }
-  pub_acceleration_max_cmd_.publish(cmd_msg);
+  acceleration_max_publisher_.publish(command);
 }
 
 void Limb::setJointAccelerationsMin(const std::unordered_map<std::string, double>& accelerations) {
-  baxter_core_msgs::AccelerationMin cmd_msg;
-  for (const auto& joint : accelerations) {
-    cmd_msg.joint_names.push_back(joint.first);
-    cmd_msg.accelerations.push_back(joint.second);
+  baxter_core_msgs::AccelerationMin command;
+  for (const auto& [joint, acceleration] : accelerations) {
+    command.joint_names.push_back(joint);
+    command.accelerations.push_back(acceleration);
   }
-  pub_acceleration_min_cmd_.publish(cmd_msg);
+  acceleration_min_publisher_.publish(command);
 }
 
 void Limb::setJointVelocities(const std::unordered_map<std::string, double>& velocities) {
-  baxter_core_msgs::JointCommand cmd_msg;
-  cmd_msg.mode = baxter_core_msgs::JointCommand::VELOCITY_MODE;
-  for (const auto& joint : velocities) {
-    cmd_msg.names.push_back(joint.first);
-    cmd_msg.command.push_back(joint.second);
+  baxter_core_msgs::JointCommand command;
+  command.mode = baxter_core_msgs::JointCommand::VELOCITY_MODE;
+  for (const auto& [joint, velocity] : velocities) {
+    command.names.push_back(joint);
+    command.command.push_back(velocity);
   }
-  pub_joint_cmd_.publish(cmd_msg);
+  joint_command_publisher_.publish(command);
 }
 
 void Limb::setJointTorques(const std::unordered_map<std::string, double>& torques) {
-  baxter_core_msgs::JointCommand cmd_msg;
-  cmd_msg.mode = baxter_core_msgs::JointCommand::TORQUE_MODE;
-  for (const auto& joint : torques) {
-    cmd_msg.names.push_back(joint.first);
-    cmd_msg.command.push_back(joint.second);
+  baxter_core_msgs::JointCommand command;
+  command.mode = baxter_core_msgs::JointCommand::TORQUE_MODE;
+  for (const auto& [joint, torque] : torques) {
+    command.names.push_back(joint);
+    command.command.push_back(torque);
   }
-  pub_joint_cmd_.publish(cmd_msg);
+  joint_command_publisher_.publish(command);
 }
 
 void Limb::exitControlMode(double timeout) {
@@ -309,37 +327,58 @@ void Limb::exitControlMode(double timeout) {
 
 void Limb::moveToNeutral(double timeout) {
   const std::unordered_map<std::string, double> neutral_positions = {
-      {name + "_s0", 0.0},  {name + "_s1", -0.55}, {name + "_e0", 0.0},
-      {name + "_e1", 0.75}, {name + "_w0", 0.0},   {name + "_w1", 1.26},
-      {name + "_w2", 0.0}};
+      {limb_name_ + "_s0", 0.0},  {limb_name_ + "_s1", -0.55}, {limb_name_ + "_e0", 0.0},
+      {limb_name_ + "_e1", 0.75}, {limb_name_ + "_w0", 0.0},   {limb_name_ + "_w1", 1.26},
+      {limb_name_ + "_w2", 0.0}};
 
-  setJointPositions(neutral_positions);
-  ros::Duration(timeout).sleep();
+  // A single joint command expires after the joint-command timeout, so the
+  // target is republished until the arm arrives (as the Python SDK does).
+  const ros::Time deadline = ros::Time::now() + ros::Duration(timeout);
+  ros::Rate command_rate(kPositionCommandRateHz);
+  while (ros::ok() && ros::Time::now() < deadline) {
+    setJointPositions(neutral_positions);
+    const std::unordered_map<std::string, double> measured_angles = jointAngles();
+    const bool arrived =
+        measured_angles.size() == neutral_positions.size() &&
+        std::all_of(neutral_positions.begin(), neutral_positions.end(),
+                    [&measured_angles](const std::pair<const std::string, double>& target) {
+                      const auto measured = measured_angles.find(target.first);
+                      return measured != measured_angles.end() &&
+                             std::abs(measured->second - target.second) < kJointAngleToleranceRad;
+                    });
+    if (arrived) return;
+    command_rate.sleep();
+  }
 }
 
 std::unordered_map<std::string, Point> Limb::endpointPose() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return cartesian_pose_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return endpoint_position_;
+}
+
+std::unordered_map<std::string, Quaternion> Limb::endpointOrientation() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return endpoint_orientation_;
 }
 
 std::unordered_map<std::string, Point> Limb::endpointVelocity() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return cartesian_velocity_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return endpoint_velocity_;
 }
 
 std::unordered_map<std::string, Point> Limb::endpointEffort() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  return cartesian_effort_;
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  return endpoint_effort_;
 }
 
 void Limb::setCommandTimeout(double timeout) {
-  std_msgs::Float64 timeout_msg;
-  timeout_msg.data = timeout;
-  pub_joint_cmd_timeout_.publish(timeout_msg);
+  std_msgs::Float64 timeout_message;
+  timeout_message.data = timeout;
+  command_timeout_publisher_.publish(timeout_message);
 }
 
 void Limb::setJointPositionSpeed(double speed) {
-  std_msgs::Float64 speed_msg;
-  speed_msg.data = speed;
-  pub_speed_ratio_.publish(speed_msg);
+  std_msgs::Float64 speed_message;
+  speed_message.data = speed;
+  speed_ratio_publisher_.publish(speed_message);
 }

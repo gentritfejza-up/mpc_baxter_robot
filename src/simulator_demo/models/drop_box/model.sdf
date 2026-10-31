@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!-- Drop box for the pick demo: inner 240 x 240 x 120 mm, floor top 0.93 m above the
+     ground (base z 0.0, 0.18 m above the belt top), on a column. Origin on the ground. -->
+<sdf version="1.6">
+  <model name="drop_box">
+    <static>true</static>
+    <link name="box">
+      <collision name="floor_c"><pose>0 0 0.925 0 0 0</pose><geometry><box><size>0.26 0.26 0.01</size></box></geometry></collision>
+      <visual name="floor_v"><pose>0 0 0.925 0 0 0</pose><geometry><box><size>0.26 0.26 0.01</size></box></geometry><material><ambient>0.55 0.35 0.15 1</ambient><diffuse>0.65 0.45 0.2 1</diffuse></material></visual>
+      <collision name="wall_px_c"><pose>0.125 0 0.99 0 0 0</pose><geometry><box><size>0.01 0.26 0.12</size></box></geometry></collision>
+      <visual name="wall_px_v"><pose>0.125 0 0.99 0 0 0</pose><geometry><box><size>0.01 0.26 0.12</size></box></geometry><material><ambient>0.55 0.35 0.15 1</ambient><diffuse>0.65 0.45 0.2 1</diffuse></material></visual>
+      <collision name="wall_nx_c"><pose>-0.125 0 0.99 0 0 0</pose><geometry><box><size>0.01 0.26 0.12</size></box></geometry></collision>
+      <visual name="wall_nx_v"><pose>-0.125 0 0.99 0 0 0</pose><geometry><box><size>0.01 0.26 0.12</size></box></geometry><material><ambient>0.55 0.35 0.15 1</ambient><diffuse>0.65 0.45 0.2 1</diffuse></material></visual>
+      <collision name="wall_py_c"><pose>0 0.125 0.99 0 0 0</pose><geometry><box><size>0.26 0.01 0.12</size></box></geometry></collision>
+      <visual name="wall_py_v"><pose>0 0.125 0.99 0 0 0</pose><geometry><box><size>0.26 0.01 0.12</size></box></geometry><material><ambient>0.55 0.35 0.15 1</ambient><diffuse>0.65 0.45 0.2 1</diffuse></material></visual>
+      <collision name="wall_ny_c"><pose>0 -0.125 0.99 0 0 0</pose><geometry><box><size>0.26 0.01 0.12</size></box></geometry></collision>
+      <visual name="wall_ny_v"><pose>0 -0.125 0.99 0 0 0</pose><geometry><box><size>0.26 0.01 0.12</size></box></geometry><material><ambient>0.55 0.35 0.15 1</ambient><diffuse>0.65 0.45 0.2 1</diffuse></material></visual>
+      <collision name="column_c"><pose>0 0 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+      <visual name="column_v"><pose>0 0 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><ambient>0.55 0.35 0.15 1</ambient><diffuse>0.65 0.45 0.2 1</diffuse></material></visual>
+      <collision name="foot_c"><pose>0 0 0.01 0 0 0</pose><geometry><box><size>0.25 0.25 0.02</size></box></geometry></collision>
+      <visual name="foot_v"><pose>0 0 0.01 0 0 0</pose><geometry><box><size>0.25 0.25 0.02</size></box></geometry><material><ambient>0.55 0.35 0.15 1</ambient><diffuse>0.65 0.45 0.2 1</diffuse></material></visual>
+    </link>
+  </model>
+</sdf>

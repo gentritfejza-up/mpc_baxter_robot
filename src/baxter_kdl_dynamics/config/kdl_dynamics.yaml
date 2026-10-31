@@ -1,0 +1,49 @@
+robot:
+  kdl_dynamics:
+    root_link: "torso"
+    # Gazebo: true. The real Baxter adds its own gravity compensation in torque mode: false.
+    add_gravity_compensation: true
+    # Add back the viscous joint damping declared in the URDF (b * qd).
+    # Gravity vector in the root link frame [m/s^2].
+    gravity: [0.0, 0.0, -9.81]
+    compensate_viscous_damping: true
+    # Lump hand, gripper and finger inertia into the arm-chain tip (zero finger position).
+    aggregate_tip_subtree_inertia: true
+    robot_description_timeout_sec: 10.0
+    # Positive value [Nm] replaces the URDF s1 effort limit; negative keeps the URDF value.
+    s1_torque_limit_override: -1.0
+    # Inner computed-torque PD on the MPC trajectory,
+    # qdd = a_mpc + kp*(q_ref - q) + kd*(v_ref - v); critically damped at ~8 rad/s.
+    # baxter_mpc.launch zeroes both unless inner_pd:=true (pure feedforward in Gazebo).
+    kp: [60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0]
+    kd: [15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0]
+    # Track q0 + v0*t + a*t^2/2 from the MPC sample time instead of a fixed point,
+    # with t clamped to max_reference_extrapolation_sec.
+    extrapolate_reference: true
+    max_reference_extrapolation_sec: 0.1
+    # Without an MPC reference, hold the current pose instead of handing the joints
+    # back to position mode: the simulator's position-to-torque hand-over can kick
+    # the arm, and this way it happens at the enable while the MPC still idles.
+    hold_when_idle: true
+    # torque: gravity/Coriolis/damping compensation + the torque-space PD below.
+    # position: command the measured pose in position mode (the simulator's own
+    # controllers hold it).
+    hold_mode: torque
+    # Torque-space hold PD per joint (s0 s1 e0 e1 w0 w1 w2) [Nm/rad], [Nm s/rad],
+    # about critically damped for the KDL joint inertias. Torque space rather than
+    # acceleration space so that the light simulated wrists get enough stiffness
+    # to come back from a limit stop.
+    hold_kp: [50.0, 60.0, 30.0, 30.0, 8.0, 6.0, 4.0]
+    hold_kd: [20.0, 24.0, 10.0, 10.0, 1.5, 1.0, 0.6]
+    # A joint that moves more than this [rad] between two loop iterations was
+    # teleported (simulator reset, set_model_configuration): the hold re-anchors at
+    # the new pose instead of pulling the arm back to the old one.
+    teleport_jump_rad: 0.2
+  control:
+    kdl_dynamics_rate_hz: 800.0
+    kdl_diagnostics_rate_hz: 50.0
+    # MPC references older than this are stale; also used as the joint-command timeout.
+    acceleration_ref_timeout_sec: 0.3
+    # Joint states older than this stop the torque commands (watchdog hand-back).
+    joint_state_timeout_sec: 0.2
+    spinner_threads: 5

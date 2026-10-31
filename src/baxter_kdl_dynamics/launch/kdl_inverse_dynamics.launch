@@ -1,0 +1,30 @@
+<launch>
+  <arg name="limb" default="left" doc="Which limb to control: left or right" />
+  <arg name="add_gravity_compensation" default="true"
+       doc="Add KDL gravity torque (Gazebo: true; the real Baxter compensates gravity itself: false)." />
+  <arg name="compensate_viscous_damping" default="true"
+       doc="Compensate the viscous joint damping declared in the active URDF (b * qd)." />
+  <arg name="aggregate_tip_subtree_inertia" default="true"
+       doc="Lump tip descendants into the serial arm model at zero descendant-joint position." />
+  <arg name="s1_torque_limit_override" default="-1.0"
+       doc="Positive s1 torque limit override in Nm; negative uses the active URDF limit." />
+
+  <rosparam command="load" file="$(find baxter_kdl_dynamics)/config/kdl_dynamics.yaml" />
+  <param name="robot/kdl_dynamics/add_gravity_compensation"
+         type="bool" value="$(arg add_gravity_compensation)" />
+  <param name="robot/kdl_dynamics/compensate_viscous_damping"
+         type="bool" value="$(arg compensate_viscous_damping)" />
+  <param name="robot/kdl_dynamics/aggregate_tip_subtree_inertia"
+         type="bool" value="$(arg aggregate_tip_subtree_inertia)" />
+  <param name="robot/kdl_dynamics/s1_torque_limit_override"
+         type="double" value="$(arg s1_torque_limit_override)" />
+
+  <node name="kdl_inverse_dynamics_node_$(arg limb)"
+        pkg="baxter_kdl_dynamics"
+        type="run_kdl_inverse_dynamics"
+        output="screen"
+        args="$(arg limb)">
+    <!-- Private so that two limbs launched together keep their own tip links. -->
+    <param name="tip_link" value="$(arg limb)_gripper_base" />
+  </node>
+</launch>

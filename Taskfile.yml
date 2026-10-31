@@ -4,6 +4,12 @@ version: "3"
 vars:
   COMPOSE_FILE: docker/docker-compose.yml
   SERVICE: dev
+  LIMB: left
+  ROS_SETUP: >-
+    source /opt/ros/noetic/setup.bash &&
+    source /workspace/devel/setup.bash &&
+    export ROS_MASTER_URI=http://localhost:11311 ROS_IP=127.0.0.1 &&
+    unset ROS_HOSTNAME
 
 tasks:
   docker:build:
@@ -32,6 +38,123 @@ tasks:
     desc: Stop the development container
     cmds:
       - docker compose -f {{.COMPOSE_FILE}} down
+
+  run:sim:
+    desc: Start Baxter in Gazebo with the arm-gravity helper (leave running in its own terminal)
+    deps: [docker:up]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec
+        -e __NV_PRIME_RENDER_OFFLOAD=1 -e __GLX_VENDOR_LIBRARY_NAME=nvidia {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && exec roslaunch simulator_demo baxter_world.launch'
+
+  run:mpc:
+    desc: Start MPC with the current simulated joint positions as its initial target
+    requires:
+      vars:
+        - name: LIMB
+          enum: [left, right]
+    cmds:
+      - |
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}} bash -lc '
+        {{.ROS_SETUP}} &&
+        python3 - "{{.LIMB}}" << "PY"
+        import sys
+        import rospy
+        from sensor_msgs.msg import JointState
+
+        limb = sys.argv[1]
+        rospy.init_node("initialize_mpc_target", anonymous=True)
+        names = [limb + "_" + suffix for suffix in
+                 ["s0", "s1", "e0", "e1", "w0", "w1", "w2"]]
+        for attempt in range(100):
+            msg = rospy.wait_for_message("/robot/joint_states", JointState, timeout=10)
+            positions = dict(zip(msg.name, msg.position))
+            if all(name in positions for name in names):
+                for i, name in enumerate(names):
+                    rospy.set_param("/mpc_controller_node_" + limb + "/ref_" + str(i),
+                                    positions[name])
+                break
+        else:
+            raise RuntimeError("No complete joint state received for " + limb)
+        PY
+        result=$?
+        if [ "$result" -ne 0 ]; then exit "$result"; fi
+        exec roslaunch baxter_mpc_controller mpc_controller.launch limb:={{.LIMB}}
+        '
+
+  run:dynamics:
+    desc: Enable simulated Baxter and start the Lagrange-Euler torque loop for one arm (start MPC first)
+    requires:
+      vars:
+        - name: LIMB
+          enum: [left, right]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && rosrun baxter_tools enable_robot.py -e &&
+        exec roslaunch baxter_dynamics lagrange_euler.launch limb:={{.LIMB}}'
+
+  run:validate:
+    desc: Gazebo + torque loop + MPC with N clearance-checked poses (or SCENARIO=floor|torso|crossing), then a tracking summary. GUI=true shows Gazebo (NVIDIA offload), RVIZ=true adds the collision-guard view, BACKEND=kdl|lagrange_euler picks the dynamics model.
+    vars:
+      POSES: '{{.POSES | default "20"}}'
+      BACKEND: '{{.BACKEND | default "kdl"}}'
+      DWELL: '{{.DWELL | default "6.0"}}'
+      GUI: '{{.GUI | default "false"}}'
+      RVIZ: '{{.RVIZ | default "false"}}'
+      SCENARIO: '{{.SCENARIO | default ""}}'
+      BOTH_ARMS: '{{.BOTH_ARMS | default "false"}}'
+      Z_MIN: '{{.Z_MIN | default ""}}'
+      OUT: '{{.OUT | default "/workspace/validation/latest.txt"}}'
+    deps: [docker:up]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec
+        -e __NV_PRIME_RENDER_OFFLOAD=1 -e __GLX_VENDOR_LIBRARY_NAME=nvidia {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && mkdir -p $(dirname {{.OUT}}) &&
+        roslaunch simulator_demo baxter_mpc.launch
+        gui:={{.GUI}} headless:={{if eq .GUI "true"}}false{{else}}true{{end}} rviz:={{.RVIZ}}
+        limb:={{.LIMB}} pose_count:={{.POSES}} scenario:={{.SCENARIO}} both_arms:={{.BOTH_ARMS}} dynamics_backend:={{.BACKEND}} {{if .Z_MIN}}z_min:={{.Z_MIN}}{{end}}
+        reference_interval_sec:={{.DWELL}} diagnostics_file:={{.OUT}} shutdown_after_references:=true &&
+        rosrun baxter_mpc_controller summarize_control_diagnostics.py {{.OUT}} --per-pose'
+
+  run:demo:
+    desc: Two-arm pick-and-place demo on the moving conveyor (Gazebo GUI + RViz by default). BELT_SPEED, OBJECTS, DURATION override the defaults; BACKEND=kdl|lagrange_euler picks the dynamics model.
+    vars:
+      BELT_SPEED: '{{.BELT_SPEED | default "0.05"}}'
+      BACKEND: '{{.BACKEND | default "kdl"}}'
+      OBJECTS: '{{.OBJECTS | default "6"}}'
+      DURATION: '{{.DURATION | default "180"}}'
+      GUI: '{{.GUI | default "true"}}'
+      RVIZ: '{{.RVIZ | default "true"}}'
+      OUT: '{{.OUT | default "/workspace/validation/pick_and_place.txt"}}'
+    deps: [docker:up]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec
+        -e __NV_PRIME_RENDER_OFFLOAD=1 -e __GLX_VENDOR_LIBRARY_NAME=nvidia {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && mkdir -p $(dirname {{.OUT}}) &&
+        roslaunch simulator_demo pick_and_place_demo.launch
+        gui:={{.GUI}} rviz:={{.RVIZ}} belt_speed:={{.BELT_SPEED}} objects:={{.OBJECTS}}
+        duration:={{.DURATION}} dynamics_backend:={{.BACKEND}} diagnostics_file:={{.OUT}}'
+
+  test:
+    desc: Build and run the unit tests (collision primitives, sphere model, QP rows, Lagrange-Euler vs KDL)
+    deps: [docker:up]
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
+        bash -lc 'source /opt/ros/noetic/setup.bash && cd /workspace &&
+        catkin_make run_tests_baxter_mpc_controller run_tests_baxter_dynamics &&
+        catkin_test_results build/test_results'
+
+  run:tune:
+    desc: Open the MPC dynamic-reconfigure GUI
+    cmds:
+      - >-
+        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && exec rosrun rqt_reconfigure rqt_reconfigure'
 
   clean:
     desc: Remove catkin build and devel artifacts (forces full rebuild)

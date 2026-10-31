@@ -1,0 +1,37 @@
+# Collision geometry for the MPC guard. All lengths in metres.
+#
+# arm_spheres: applied to both arms ("{side}" becomes left/right). Offsets are in the
+#   link frame. Three r=0.07 spheres 0.10 apart wrap an r=0.06 link cylinder with a
+#   1 cm skin (a thin sliver between spheres is uncovered; the margins cover it).
+#   Optional keys: floor, body, other_arm (bools, default true), ignore (body obstacle
+#   names), body_margin (override), side (left|right: entry for that arm only; use pairs).
+# body: keep-out primitives in the base frame (torso == base). The trunk is a box whose
+#   half-width (0.20) is the body surface below the arm mounts (the mesh bounding box,
+#   +-0.335, includes the shoulder housings and would swallow the arms at rest); the
+#   chest front is at x = 0.17. The head spheres are the URDF's own collision_head_link_1/2.
+#   The pedestal is only its column: the mesh bounding box (+-0.42 sideways) includes the
+#   low floor legs, which the arms at rest already overlap sideways; the z floor covers them.
+robot:
+  collision_geometry:
+    arm_spheres:
+      - {link: "{side}_upper_elbow",   offset: [0.0, 0.0, 0.04], radius: 0.07, ignore: [torso]}
+      - {link: "{side}_upper_elbow",   offset: [0.0, 0.0, 0.14], radius: 0.07}
+      - {link: "{side}_upper_elbow",   offset: [0.0, 0.0, 0.24], radius: 0.07}
+      - {link: "{side}_lower_elbow",   offset: [0.0, 0.0, 0.00], radius: 0.07}
+      - {link: "{side}_upper_forearm", offset: [0.0, 0.0, 0.04], radius: 0.07}
+      - {link: "{side}_upper_forearm", offset: [0.0, 0.0, 0.14], radius: 0.07}
+      - {link: "{side}_upper_forearm", offset: [0.0, 0.0, 0.24], radius: 0.07}
+      - {link: "{side}_lower_forearm", offset: [0.0, 0.0, 0.00], radius: 0.07}
+      - {link: "{side}_wrist",         offset: [0.0, 0.0, 0.00], radius: 0.07}
+      - {link: "{side}_wrist",         offset: [0.0, 0.0, 0.10], radius: 0.07}
+      - {link: "{side}_hand",          offset: [0.0, 0.0, 0.03], radius: 0.06}
+      # Gripper fingers: the sphere bottom sits exactly at the fingertips (left_gripper
+      # 0.158 m, right_gripper 0.120 m from the hand: extended-narrow vs standard
+      # fingers), so floor_margin is the fingertip height above the belt.
+      - {link: "left_hand",  side: left,  offset: [0.0, 0.0, 0.088], radius: 0.07}
+      - {link: "right_hand", side: right, offset: [0.0, 0.0, 0.050], radius: 0.07}
+    body:
+      - {name: torso,    type: aabb,    min: [-0.22, -0.20, -0.06], max: [0.17, 0.20, 0.60]}
+      - {name: head_1,   type: sphere,  center: [0.04,  0.04, 0.75], radius: 0.22}
+      - {name: head_2,   type: sphere,  center: [0.04, -0.04, 0.75], radius: 0.22}
+      - {name: pedestal, type: aabb,    min: [-0.30, -0.22, -0.924], max: [0.17, 0.22, -0.062]}

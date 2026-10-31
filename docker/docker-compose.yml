@@ -29,6 +29,12 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all
     cap_add:
       - SYS_PTRACE
+      - SYS_NICE
     ulimits:
-      memlock: -1
       stack: -1
+      rtprio:
+        soft: 99
+        hard: 99
+      memlock:
+        soft: -1
+        hard: -1

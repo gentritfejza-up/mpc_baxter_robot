@@ -1,8 +1,25 @@
 <launch>
+  <!-- Torque loop with the Lagrange-Euler model (same arguments as kdl_inverse_dynamics.launch). -->
   <arg name="limb" default="left" doc="Which limb to control: left or right" />
+  <arg name="add_gravity_compensation" default="true"
+       doc="Add the model's gravity torque (Gazebo: true; the real Baxter compensates gravity itself: false)." />
+  <arg name="compensate_viscous_damping" default="true"
+       doc="Compensate the viscous joint damping of the arm model (the URDF damping Gazebo applies)." />
+  <arg name="s1_torque_limit_override" default="-1.0"
+       doc="Positive s1 torque limit override in Nm; negative keeps the arm model's effort limit." />
+  <arg name="lump_tip_payload" default="false"
+       doc="Lump robot/arm_model/tip_payload (the simulator's gripper fingers) into the last link; true in Gazebo, false on the real robot." />
 
   <rosparam command="load"
             file="$(find baxter_dynamics)/config/dynamics_params.yaml" />
+  <param name="robot/lagrange_euler/add_gravity_compensation"
+         type="bool" value="$(arg add_gravity_compensation)" />
+  <param name="robot/lagrange_euler/compensate_viscous_damping"
+         type="bool" value="$(arg compensate_viscous_damping)" />
+  <param name="robot/arm_model/tip_payload/enabled" type="bool" value="$(arg lump_tip_payload)" />
+  <param if="$(eval arg('s1_torque_limit_override') > 0)"
+         name="robot/lagrange_euler/torque_limit_overrides/s1"
+         type="double" value="$(arg s1_torque_limit_override)" />
 
   <node name="lagrange_euler_node_$(arg limb)"
         pkg="baxter_dynamics"

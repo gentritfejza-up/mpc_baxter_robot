@@ -1,10 +1,16 @@
 #include <baxter_kinematics/baxter_kinematics.hpp>
 
+#include <kdl_parser/kdl_parser.hpp>
 #include <ros/ros.h>
 #include <urdf/model.h>
-#include <kdl_parser/kdl_parser.hpp>
+
 #include <limits>
 #include <stdexcept>
+
+namespace {
+constexpr unsigned int kIkMaxIterations = 200;
+constexpr double kIkToleranceM = 1e-5;
+}  // namespace
 
 BaxterKinematicsInterface::BaxterKinematicsInterface(const std::string& base_link,
                                                      const std::string& end_link) {
@@ -12,141 +18,122 @@ BaxterKinematicsInterface::BaxterKinematicsInterface(const std::string& base_lin
     throw std::runtime_error("BaxterKinematicsInterface: Failed to build KDL chain.");
   }
 
-  // Create basic solvers
   fk_solver_ = std::make_unique<KDL::ChainFkSolverPos_recursive>(chain_);
-  ik_vel_solver_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(chain_);
-  jac_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(chain_);
+  ik_velocity_solver_ = std::make_unique<KDL::ChainIkSolverVel_pinv>(chain_);
+  jacobian_solver_ = std::make_unique<KDL::ChainJntToJacSolver>(chain_);
 
-  // Build the joint-limited IK solver
-  KDL::JntArray q_min(num_joints_), q_max(num_joints_);
-  for (size_t i = 0; i < num_joints_; i++) {
-    q_min(i) = joint_limits_lower_[i];
-    q_max(i) = joint_limits_upper_[i];
+  KDL::JntArray lower_limits(joint_count_), upper_limits(joint_count_);
+  for (size_t joint_index = 0; joint_index < joint_count_; ++joint_index) {
+    lower_limits(joint_index) = joint_limits_lower_[joint_index];
+    upper_limits(joint_index) = joint_limits_upper_[joint_index];
   }
+  ik_position_solver_ = std::make_unique<KDL::ChainIkSolverPos_NR_JL>(
+      chain_, lower_limits, upper_limits, *fk_solver_, *ik_velocity_solver_, kIkMaxIterations,
+      kIkToleranceM);
 
-  // 200 iterations, tolerance = 1e-5
-  ik_pos_solver_ = std::make_unique<KDL::ChainIkSolverPos_NR_JL>(
-      chain_, q_min, q_max, *fk_solver_, *ik_vel_solver_, 200, 1e-5);
-
-  ROS_INFO_STREAM("BaxterKinematicsInterface created. Joints in chain: " << num_joints_);
+  ROS_INFO_STREAM("BaxterKinematicsInterface created. Joints in chain: " << joint_count_);
 }
 
 bool BaxterKinematicsInterface::buildChain(const std::string& base_link,
                                            const std::string& end_link) {
-  // 1) Load URDF from "robot_description"
   urdf::Model urdf_model;
   if (!urdf_model.initParam("robot_description")) {
     ROS_ERROR("Failed to load URDF from param: robot_description");
     return false;
   }
 
-  // 2) Create KDL Tree
   KDL::Tree tree;
   if (!kdl_parser::treeFromUrdfModel(urdf_model, tree)) {
     ROS_ERROR("Failed to parse URDF into KDL Tree.");
     return false;
   }
 
-  // 3) Extract chain
   if (!tree.getChain(base_link, end_link, chain_)) {
     ROS_ERROR_STREAM("Failed to get KDL chain from " << base_link << " to " << end_link);
     return false;
   }
 
-  // 4) Count joints and gather names
-  num_joints_ = 0;
+  joint_count_ = 0;
   joint_names_.clear();
-
-  for (unsigned int i = 0; i < chain_.getNrOfSegments(); i++) {
-    const KDL::Segment& seg = chain_.getSegment(i);
-    const KDL::Joint& jnt = seg.getJoint();
-    if (jnt.getType() != KDL::Joint::None) {
-      num_joints_++;
-      joint_names_.push_back(jnt.getName());
+  for (unsigned int segment_index = 0; segment_index < chain_.getNrOfSegments(); ++segment_index) {
+    const KDL::Joint& joint = chain_.getSegment(segment_index).getJoint();
+    if (joint.getType() != KDL::Joint::None) {
+      ++joint_count_;
+      joint_names_.push_back(joint.getName());
     }
   }
 
-  // 5) Prepare limit arrays
-  joint_limits_lower_.resize(num_joints_, -std::numeric_limits<double>::infinity());
-  joint_limits_upper_.resize(num_joints_, std::numeric_limits<double>::infinity());
-
-  // 6) Parse actual joint limits from URDF
+  joint_limits_lower_.assign(joint_count_, -std::numeric_limits<double>::infinity());
+  joint_limits_upper_.assign(joint_count_, std::numeric_limits<double>::infinity());
   parseJointLimits(urdf_model);
-
   return true;
 }
 
-void BaxterKinematicsInterface::parseJointLimits(const urdf::Model& urdf) {
-  // For each chain joint, read the URDF joint's limits if available
-  for (size_t i = 0; i < joint_names_.size(); i++) {
-    const std::string& jname = joint_names_[i];
-    urdf::JointConstSharedPtr jnt = urdf.getJoint(jname);
-    if (!jnt) continue;  // skip if not found
-    if (jnt->limits) {
-      joint_limits_lower_[i] = jnt->limits->lower;
-      joint_limits_upper_[i] = jnt->limits->upper;
+void BaxterKinematicsInterface::parseJointLimits(const urdf::Model& urdf_model) {
+  for (size_t joint_index = 0; joint_index < joint_names_.size(); ++joint_index) {
+    const urdf::JointConstSharedPtr urdf_joint = urdf_model.getJoint(joint_names_[joint_index]);
+    if (urdf_joint && urdf_joint->limits) {
+      joint_limits_lower_[joint_index] = urdf_joint->limits->lower;
+      joint_limits_upper_[joint_index] = urdf_joint->limits->upper;
     }
   }
 }
 
 KDL::Frame BaxterKinematicsInterface::forward(const std::vector<double>& q) const {
-  if (q.size() != num_joints_) {
-    ROS_ERROR_STREAM("forward: q.size()=" << q.size() << ", expected " << num_joints_);
+  if (q.size() != joint_count_) {
+    ROS_ERROR_STREAM("forward: q.size()=" << q.size() << ", expected " << joint_count_);
     return KDL::Frame::Identity();
   }
-  KDL::JntArray jnt_arr = toKDL(q);
-
-  KDL::Frame frame_out;
-  int ret = fk_solver_->JntToCart(jnt_arr, frame_out);
-  if (ret < 0) {
-    ROS_ERROR_STREAM("forward: solver failed with code=" << ret);
+  KDL::Frame tip_pose;
+  const int solver_status = fk_solver_->JntToCart(toJntArray(q), tip_pose);
+  if (solver_status < 0) {
+    ROS_ERROR_STREAM("forward: solver failed with code=" << solver_status);
     return KDL::Frame::Identity();
   }
-  return frame_out;
+  return tip_pose;
 }
 
 std::vector<double> BaxterKinematicsInterface::inverse(const KDL::Frame& desired_pose,
                                                        const std::vector<double>& seed) const {
-  if (seed.size() != num_joints_) {
-    ROS_ERROR_STREAM("inverse: seed.size()=" << seed.size() << ", expected " << num_joints_);
+  if (seed.size() != joint_count_) {
+    ROS_ERROR_STREAM("inverse: seed.size()=" << seed.size() << ", expected " << joint_count_);
     return {};
   }
-
-  KDL::JntArray q_in = toKDL(seed);
-  KDL::JntArray q_out(num_joints_);
-
-  int ret = ik_pos_solver_->CartToJnt(q_in, desired_pose, q_out);
-  if (ret < 0) {
-    ROS_ERROR_STREAM("inverse: solver failed with code=" << ret);
+  KDL::JntArray solution(joint_count_);
+  const int solver_status = ik_position_solver_->CartToJnt(toJntArray(seed), desired_pose, solution);
+  if (solver_status < 0) {
+    ROS_ERROR_STREAM("inverse: solver failed with code=" << solver_status);
     return {};
   }
-  return toStd(q_out);
+  return toStdVector(solution);
 }
 
 KDL::Jacobian BaxterKinematicsInterface::jacobian(const std::vector<double>& q) const {
-  if (q.size() != num_joints_) {
-    ROS_ERROR_STREAM("jacobian: q.size()=" << q.size() << ", expected " << num_joints_);
+  if (q.size() != joint_count_) {
+    ROS_ERROR_STREAM("jacobian: q.size()=" << q.size() << ", expected " << joint_count_);
     return KDL::Jacobian(0);
   }
-
-  KDL::JntArray jnt_arr = toKDL(q);
-  KDL::Jacobian jac(num_joints_);
-  int ret = jac_solver_->JntToJac(jnt_arr, jac);
-  if (ret < 0) {
-    ROS_ERROR_STREAM("jacobian: solver failed with code=" << ret);
+  KDL::Jacobian tip_jacobian(joint_count_);
+  const int solver_status = jacobian_solver_->JntToJac(toJntArray(q), tip_jacobian);
+  if (solver_status < 0) {
+    ROS_ERROR_STREAM("jacobian: solver failed with code=" << solver_status);
     return KDL::Jacobian(0);
   }
-  return jac;
+  return tip_jacobian;
 }
 
-KDL::JntArray BaxterKinematicsInterface::toKDL(const std::vector<double>& v) const {
-  KDL::JntArray arr(num_joints_);
-  for (size_t i = 0; i < num_joints_; i++) arr(i) = v[i];
-  return arr;
+KDL::JntArray BaxterKinematicsInterface::toJntArray(const std::vector<double>& values) const {
+  KDL::JntArray joint_array(joint_count_);
+  for (size_t joint_index = 0; joint_index < joint_count_; ++joint_index) {
+    joint_array(joint_index) = values[joint_index];
+  }
+  return joint_array;
 }
 
-std::vector<double> BaxterKinematicsInterface::toStd(const KDL::JntArray& arr) const {
-  std::vector<double> v(arr.rows(), 0.0);
-  for (unsigned int i = 0; i < arr.rows(); i++) v[i] = arr(i);
-  return v;
+std::vector<double> BaxterKinematicsInterface::toStdVector(const KDL::JntArray& joint_array) const {
+  std::vector<double> values(joint_array.rows(), 0.0);
+  for (unsigned int joint_index = 0; joint_index < joint_array.rows(); ++joint_index) {
+    values[joint_index] = joint_array(joint_index);
+  }
+  return values;
 }

@@ -1,0 +1,60 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Collision guard (left)1
+        - /Collision guard (right)1
+  - Class: rviz/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Enabled: true
+      Name: Grid
+      Plane Cell Count: 10
+      Reference Frame: base
+    - Class: rviz/RobotModel
+      Enabled: true
+      Name: Baxter
+      Robot Description: robot_description
+      TF Prefix: ""
+      Alpha: 0.6
+    - Class: rviz/TF
+      Enabled: false
+      Name: TF
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /robot/limb/left/collision_guard_markers
+      Name: Collision guard (left)
+      Queue Size: 1
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /robot/limb/right/collision_guard_markers
+      Name: Collision guard (right)
+      Queue Size: 1
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base
+    Frame Rate: 30
+  Tools:
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 2.6
+      Focal Point:
+        X: 0.4
+        Y: 0.0
+        Z: 0.1
+      Name: Current View
+      Pitch: 0.35
+      Target Frame: base
+      Yaw: 5.6
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1400

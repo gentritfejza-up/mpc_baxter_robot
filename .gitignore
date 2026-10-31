@@ -58,3 +58,9 @@ Thumbs.db
 
 # Docker and local tooling
 docker-compose.override.yml
+
+# Simulation validation logs
+validation/
+
+# Default diagnostics output of baxter_mpc.launch
+/baxter_mpc_diagnostics*.txt

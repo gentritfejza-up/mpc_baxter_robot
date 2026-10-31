@@ -1,0 +1,8 @@
+<launch>
+  <param name="robot_description"
+         command="$(find xacro)/xacro $(find baxter_description)/urdf/baxter.urdf.xacro gazebo:=true left_electric_gripper:=true right_electric_gripper:=true" />
+  <rosparam command="load" file="$(find baxter_dynamics)/config/dynamics_params.yaml" />
+
+  <test test-name="lagrange_euler_kdl_test" pkg="baxter_dynamics"
+        type="lagrange_euler_kdl_test" time-limit="120.0" />
+</launch>

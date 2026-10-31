@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software or build on it, please cite the Master's thesis it was
+  developed for.
+type: software
+title: "Model Predictive Control with a collision guard for the Baxter robot (MPC + computed torque, ROS)"
+authors:
+  - family-names: Fejza
+    given-names: Gentrit
+    affiliation: "University of Prishtina, Faculty of Electrical and Computer Engineering, Electronics, Automation and Robotics"
+date-released: 2026-10-31
+repository-code: "https://github.com/gentritfejza-up/mpc_baxter_robot"
+license: MIT
+keywords:
+  - model predictive control
+  - computed torque control
+  - collision avoidance
+  - Baxter
+  - ROS
+preferred-citation:
+  type: thesis
+  thesis-type: "Master's thesis"
+  title: "Implementation of MPC Controller for Baxter Robot"
+  authors:
+    - family-names: Fejza
+      given-names: Gentrit
+  institution:
+    name: "University of Prishtina, Faculty of Electrical and Computer Engineering"
+    city: Prishtina
+    country: XK
+  department: "Electronics, Automation and Robotics"
+  year: 2026

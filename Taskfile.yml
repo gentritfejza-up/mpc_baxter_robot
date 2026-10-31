@@ -83,7 +83,7 @@ tasks:
         '
 
   run:dynamics:
-    desc: Enable simulated Baxter and start Lagrange-Euler torque control (start MPC first)
+    desc: Enable simulated Baxter and start the Lagrange-Euler torque loop for one arm (start MPC first)
     requires:
       vars:
         - name: LIMB
@@ -95,9 +95,10 @@ tasks:
         exec roslaunch baxter_dynamics lagrange_euler.launch limb:={{.LIMB}}'
 
   run:validate:
-    desc: Gazebo + KDL torque loop + MPC with N clearance-checked poses (or SCENARIO=floor|torso|crossing), then a tracking summary. GUI=true shows Gazebo (NVIDIA offload), RVIZ=true adds the collision-guard view.
+    desc: Gazebo + torque loop + MPC with N clearance-checked poses (or SCENARIO=floor|torso|crossing), then a tracking summary. GUI=true shows Gazebo (NVIDIA offload), RVIZ=true adds the collision-guard view, BACKEND=kdl|lagrange_euler picks the dynamics model.
     vars:
       POSES: '{{.POSES | default "20"}}'
+      BACKEND: '{{.BACKEND | default "kdl"}}'
       DWELL: '{{.DWELL | default "6.0"}}'
       GUI: '{{.GUI | default "false"}}'
       RVIZ: '{{.RVIZ | default "false"}}'
@@ -111,16 +112,17 @@ tasks:
         docker compose -f {{.COMPOSE_FILE}} exec
         -e __NV_PRIME_RENDER_OFFLOAD=1 -e __GLX_VENDOR_LIBRARY_NAME=nvidia {{.SERVICE}}
         bash -lc '{{.ROS_SETUP}} && mkdir -p $(dirname {{.OUT}}) &&
-        roslaunch baxter_mpc_controller baxter_mpc.launch
+        roslaunch simulator_demo baxter_mpc.launch
         gui:={{.GUI}} headless:={{if eq .GUI "true"}}false{{else}}true{{end}} rviz:={{.RVIZ}}
-        limb:={{.LIMB}} pose_count:={{.POSES}} scenario:={{.SCENARIO}} both_arms:={{.BOTH_ARMS}} {{if .Z_MIN}}z_min:={{.Z_MIN}}{{end}}
+        limb:={{.LIMB}} pose_count:={{.POSES}} scenario:={{.SCENARIO}} both_arms:={{.BOTH_ARMS}} dynamics_backend:={{.BACKEND}} {{if .Z_MIN}}z_min:={{.Z_MIN}}{{end}}
         reference_interval_sec:={{.DWELL}} diagnostics_file:={{.OUT}} shutdown_after_references:=true;
         rosrun baxter_mpc_controller summarize_control_diagnostics.py {{.OUT}} --per-pose'
 
   run:demo:
-    desc: Two-arm pick-and-place demo on the moving conveyor (Gazebo GUI + RViz by default). BELT_SPEED, OBJECTS, DURATION override the defaults.
+    desc: Two-arm pick-and-place demo on the moving conveyor (Gazebo GUI + RViz by default). BELT_SPEED, OBJECTS, DURATION override the defaults; BACKEND=kdl|lagrange_euler picks the dynamics model.
     vars:
       BELT_SPEED: '{{.BELT_SPEED | default "0.05"}}'
+      BACKEND: '{{.BACKEND | default "kdl"}}'
       OBJECTS: '{{.OBJECTS | default "6"}}'
       DURATION: '{{.DURATION | default "180"}}'
       GUI: '{{.GUI | default "true"}}'
@@ -132,9 +134,9 @@ tasks:
         docker compose -f {{.COMPOSE_FILE}} exec
         -e __NV_PRIME_RENDER_OFFLOAD=1 -e __GLX_VENDOR_LIBRARY_NAME=nvidia {{.SERVICE}}
         bash -lc '{{.ROS_SETUP}} && mkdir -p $(dirname {{.OUT}}) &&
-        roslaunch baxter_mpc_controller pick_and_place_demo.launch
+        roslaunch simulator_demo pick_and_place_demo.launch
         gui:={{.GUI}} rviz:={{.RVIZ}} belt_speed:={{.BELT_SPEED}} objects:={{.OBJECTS}}
-        duration:={{.DURATION}} diagnostics_file:={{.OUT}}'
+        duration:={{.DURATION}} dynamics_backend:={{.BACKEND}} diagnostics_file:={{.OUT}}'
 
   test:
     desc: Build and run the unit tests (collision primitives, sphere model, QP rows, Lagrange-Euler vs KDL)

@@ -46,7 +46,6 @@
             URDF the model is built from, the MPC re-plans from the measured state at 50 Hz); turn
             on for the real robot, where the model is approximate." />
   <arg name="sim_s1_torque_max" default="100.0" doc="Simulated s1 positive torque limit in Nm" />
-  <arg name="sim_s1_torque_min" default="-100.0" doc="Simulated s1 negative torque limit in Nm" />
 
   <!-- Collision guard and conveyor -->
   <arg name="geometry" default="true" doc="Enable the MPC collision guard" />
@@ -68,26 +67,28 @@
   </include>
 
   <!-- The simulator's gravity emulation races with the spawn (see the script). -->
-  <node name="enforce_arm_gravity" pkg="baxter_mpc_controller" type="enforce_arm_gravity.py" output="screen" />
+  <node name="enforce_arm_gravity" pkg="simulator_demo" type="enforce_arm_gravity.py" output="screen" />
 
   <!-- The conveyor model: origin on the ground, belt top at z = 0.75; Baxter's base is at
        the world origin (spawned at z = 0.93), so base-frame x/y are world x/y. -->
   <node if="$(arg conveyor)" name="conveyor_spawner" pkg="gazebo_ros" type="spawn_model"
         respawn="false" output="screen"
-        args="-sdf -file $(find baxter_mpc_controller)/models/conveyor_ct6030/model.sdf -model conveyor_ct6030 -x $(arg conveyor_x) -y $(arg conveyor_y) -z 0 -Y $(arg conveyor_yaw)" />
+        args="-sdf -file $(find simulator_demo)/models/conveyor_ct6030/model.sdf -model conveyor_ct6030 -x $(arg conveyor_x) -y $(arg conveyor_y) -z 0 -Y $(arg conveyor_yaw)" />
 
   <!-- Torque loop for the controlled arm (one of the two backends). -->
   <include if="$(eval arg('dynamics_backend') == 'lagrange_euler')"
            file="$(find baxter_dynamics)/launch/lagrange_euler.launch">
     <arg name="limb" value="$(arg limb)" />
-    <arg name="s1_torque_max" value="$(arg sim_s1_torque_max)" />
-    <arg name="s1_torque_min" value="$(arg sim_s1_torque_min)" />
+    <arg name="add_gravity_compensation" value="true" />
+    <arg name="compensate_viscous_damping" value="true" />
+    <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
+    <arg name="lump_tip_payload" value="true" />
   </include>
   <include if="$(eval arg('dynamics_backend') == 'kdl')"
            file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
     <arg name="limb" value="$(arg limb)" />
     <arg name="add_gravity_compensation" value="true" />
-    <arg name="compensate_urdf_damping" value="true" />
+    <arg name="compensate_viscous_damping" value="true" />
     <arg name="aggregate_tip_subtree_inertia" value="true" />
     <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
   </include>
@@ -109,10 +110,19 @@
   <!-- Other arm: its own torque loop, MPC and reference sender (mirrored scenario, own seed). -->
   <arg name="other_limb" value="$(eval 'right' if arg('limb') == 'left' else 'left')" />
   <group if="$(arg both_arms)">
-    <include file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
+    <include if="$(eval arg('dynamics_backend') == 'lagrange_euler')"
+             file="$(find baxter_dynamics)/launch/lagrange_euler.launch">
       <arg name="limb" value="$(arg other_limb)" />
       <arg name="add_gravity_compensation" value="true" />
-      <arg name="compensate_urdf_damping" value="true" />
+      <arg name="compensate_viscous_damping" value="true" />
+      <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
+      <arg name="lump_tip_payload" value="true" />
+    </include>
+    <include if="$(eval arg('dynamics_backend') == 'kdl')"
+             file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
+      <arg name="limb" value="$(arg other_limb)" />
+      <arg name="add_gravity_compensation" value="true" />
+      <arg name="compensate_viscous_damping" value="true" />
       <arg name="aggregate_tip_subtree_inertia" value="true" />
       <arg name="s1_torque_limit_override" value="$(arg sim_s1_torque_max)" />
     </include>
@@ -128,7 +138,7 @@
     </include>
     <node if="$(arg send_references)"
           name="mpc_sim_reference_sender_$(arg other_limb)"
-          pkg="baxter_mpc_controller"
+          pkg="simulator_demo"
           type="send_sim_references.py"
           output="screen"
           args="--limb $(arg other_limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --scenario '$(arg scenario)' --z-min $(arg z_min) --seed 20260912" />
@@ -155,7 +165,7 @@
   <!-- Enable only once the simulated effort controller exists. -->
   <node if="$(arg auto_enable)"
         name="enable_simulated_baxter"
-        pkg="baxter_mpc_controller"
+        pkg="simulator_demo"
         type="enable_simulated_baxter.py"
         output="screen"
         args="--limb $(arg limb)" />
@@ -171,14 +181,14 @@
   <group if="$(arg send_references)">
     <node unless="$(arg repeat_references)"
           name="mpc_sim_reference_sender"
-          pkg="baxter_mpc_controller"
+          pkg="simulator_demo"
           type="send_sim_references.py"
           output="screen"
           required="$(arg shutdown_after_references)"
           args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --scenario '$(arg scenario)' --z-min $(arg z_min)" />
     <node if="$(arg repeat_references)"
           name="mpc_sim_reference_sender"
-          pkg="baxter_mpc_controller"
+          pkg="simulator_demo"
           type="send_sim_references.py"
           output="screen"
           args="--limb $(arg limb) --interval $(arg reference_interval_sec) --report-interval $(arg report_interval_sec) --poses $(arg pose_count) --scenario '$(arg scenario)' --z-min $(arg z_min) --repeat" />

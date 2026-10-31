@@ -35,11 +35,7 @@ generate_dynamic_reconfigure_options(
 )
 
 catkin_install_python(PROGRAMS
-  scripts/enable_simulated_baxter.py
   scripts/record_control_diagnostics.py
-  scripts/send_sim_references.py
-  scripts/pick_and_place_demo.py
-  scripts/enforce_arm_gravity.py
   scripts/summarize_control_diagnostics.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
@@ -129,9 +125,6 @@ install(DIRECTORY config/
   FILES_MATCHING PATTERN "*.yaml" PATTERN "*.rviz"
 )
 
-install(DIRECTORY models/
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/models
-)
 install(DIRECTORY launch/
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
   FILES_MATCHING PATTERN "*.launch"

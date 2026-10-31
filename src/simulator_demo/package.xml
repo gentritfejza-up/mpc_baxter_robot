@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>simulator_demo</name>
+  <version>1.0.0</version>
+  <description>
+    Gazebo simulation of the Baxter MPC stack: the simulated two-arm launch with the
+    conveyor, the validation scenarios and the pick-and-place demo.
+  </description>
+  <maintainer email="gentritfejza@gmail.com">Gentrit Fejza</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>baxter_mpc_controller</exec_depend>
+  <exec_depend>baxter_kdl_dynamics</exec_depend>
+  <exec_depend>baxter_dynamics</exec_depend>
+  <exec_depend>baxter_gazebo</exec_depend>
+  <exec_depend>baxter_interface</exec_depend>
+  <exec_depend>baxter_tools</exec_depend>
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>rviz</exec_depend>
+</package>

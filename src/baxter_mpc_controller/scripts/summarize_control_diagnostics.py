@@ -258,7 +258,7 @@ def print_geometry_summary(geometry: Sequence[dict]) -> None:
 
 def print_kdl_summary(kdl_samples: Sequence[dict], joint_names: Sequence[str]) -> None:
     loop_dt_ms = [record["loop_dt_ms"] for record in kdl_samples]
-    print("\nKDL torque loop: %d samples, loop dt median %.2f ms (p95 %.2f, max %.2f), compute median %.3f ms" % (
+    print("\nTorque loop: %d samples, loop dt median %.2f ms (p95 %.2f, max %.2f), compute median %.3f ms" % (
         len(kdl_samples), median(loop_dt_ms), percentile_95(loop_dt_ms), max(loop_dt_ms),
         median([record["compute_ms"] for record in kdl_samples])))
     print("max |torque| per joint: " + "  ".join(

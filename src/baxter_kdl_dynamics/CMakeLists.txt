@@ -10,6 +10,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic")
 
 find_package(catkin REQUIRED COMPONENTS
+  baxter_dynamics
   baxter_interface_cpp
   kdl_parser
   roscpp
@@ -21,7 +22,7 @@ find_package(orocos_kdl REQUIRED)
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
-  CATKIN_DEPENDS baxter_interface_cpp kdl_parser roscpp std_msgs urdf
+  CATKIN_DEPENDS baxter_dynamics baxter_interface_cpp kdl_parser roscpp std_msgs urdf
   DEPENDS orocos_kdl
 )
 
@@ -31,6 +32,7 @@ include_directories(
   ${orocos_kdl_INCLUDE_DIRS}
 )
 
+# The KDL model only; the torque loop comes from baxter_dynamics.
 add_library(${PROJECT_NAME} SHARED
   src/kdl_inverse_dynamics.cpp
 )

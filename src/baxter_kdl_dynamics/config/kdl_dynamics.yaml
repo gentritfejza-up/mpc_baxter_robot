@@ -4,7 +4,9 @@ robot:
     # Gazebo: true. The real Baxter adds its own gravity compensation in torque mode: false.
     add_gravity_compensation: true
     # Add back the viscous joint damping declared in the URDF (b * qd).
-    compensate_urdf_damping: true
+    # Gravity vector in the root link frame [m/s^2].
+    gravity: [0.0, 0.0, -9.81]
+    compensate_viscous_damping: true
     # Lump hand, gripper and finger inertia into the arm-chain tip (zero finger position).
     aggregate_tip_subtree_inertia: true
     robot_description_timeout_sec: 10.0

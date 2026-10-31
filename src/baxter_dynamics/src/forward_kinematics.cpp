@@ -1,77 +1,52 @@
 #include "baxter_dynamics/forward_kinematics.hpp"
 
 #include <cmath>
-#include <memory>
-#include <utility>
+#include <stdexcept>
 
 namespace baxter {
 
-ForwardKinematics::ForwardKinematics(ros::NodeHandle & /*nh*/,
-                                     std::shared_ptr<Robot> robot)
-    : robot_(std::move(robot)) {}
-
-ForwardKinematics::ForwardKinematics(const std::string &limb,
-                                     ros::NodeHandle &nh)
-    : ForwardKinematics(nh, std::make_shared<Robot>(limb, nh)) {}
-
-bool ForwardKinematics::checkJointLimits(
-    const std::unordered_map<std::string, double> &joint_angles) const {
-  bool all_within_limits = true;
-  const auto &angle_limits = robot_->getAngleLimits();
-  for (const auto &joint : robot_->getJointNames()) {
-    const auto angle_it = joint_angles.find(joint);
-    if (angle_it == joint_angles.end()) {
-      continue; // Reported by solveIntermediateFK when the angle is needed.
-    }
-    const double angle = angle_it->second;
-    const auto &[lower, upper] = angle_limits.at(joint);
-    if (angle < lower || angle > upper) {
-      ROS_WARN_STREAM_THROTTLE(1, joint << " joint limits exceeded! (" << angle
-                                        << " not in [" << lower << ", "
-                                        << upper << "])");
-      all_within_limits = false;
-    }
+void ForwardKinematics::compute(const Eigen::VectorXd& positions, Transforms& transforms) const {
+  const std::size_t joint_count = arm_.jointCount();
+  if (static_cast<std::size_t>(positions.size()) != joint_count) {
+    throw std::runtime_error("Forward kinematics: expected " + std::to_string(joint_count) +
+                             " joint positions, got " + std::to_string(positions.size()));
   }
-  return all_within_limits;
+  transforms.resize(joint_count + 1);
+  transforms[0] = Eigen::Matrix4d::Identity();  // ^0T_0: the base frame.
+
+  for (std::size_t index = 0; index < joint_count; ++index) {
+    const JointDescription& joint = arm_.joints[index];
+    const double q = positions(static_cast<Eigen::Index>(index));
+    const double d = joint.dh.d_offset + (joint.type == JointType::kPrismatic ? q : 0.0);
+    const double theta = joint.dh.theta_offset + (joint.type == JointType::kRevolute ? q : 0.0);
+    transforms[index + 1] =
+        transforms[index] * dhTransform(d, theta, joint.dh.a, joint.dh.alpha);  // ^0T_{i+1}
+  }
 }
 
-std::vector<Eigen::Matrix4d> ForwardKinematics::solveIntermediateFK(
-    const std::unordered_map<std::string, double> &joint_angles) const {
-  checkJointLimits(joint_angles);
-
-  const auto &joint_names = robot_->getJointNames();
-  const auto &dh_table = robot_->getDhParams();
-
-  std::vector<Eigen::Matrix4d> link_transforms;
-  link_transforms.reserve(joint_names.size() + 1);
-
-  Eigen::Matrix4d base_to_link = Eigen::Matrix4d::Identity();
-  link_transforms.push_back(base_to_link); // ^0T_0: base frame.
-
-  for (const auto &joint : joint_names) {
-    const DhParameters &dh = dh_table.at(joint);
-    const double theta = dh.theta_offset + joint_angles.at(joint);
-    base_to_link = base_to_link * dhTransform(dh.d, theta, dh.a, dh.alpha);
-    link_transforms.push_back(base_to_link); // ^0T_i
+std::size_t ForwardKinematics::countLimitViolations(const Eigen::VectorXd& positions) const {
+  std::size_t violations = 0;
+  const auto count = std::min<std::size_t>(arm_.jointCount(), positions.size());
+  for (std::size_t index = 0; index < count; ++index) {
+    const double q = positions(static_cast<Eigen::Index>(index));
+    const JointDescription& joint = arm_.joints[index];
+    if (q < joint.lower_limit || q > joint.upper_limit) ++violations;
   }
-
-  return link_transforms;
+  return violations;
 }
 
-Eigen::Matrix4d ForwardKinematics::dhTransform(double d, double theta,
-                                               double a, double alpha) {
+Eigen::Matrix4d ForwardKinematics::dhTransform(double d, double theta, double a, double alpha) {
   const double cos_theta = std::cos(theta);
   const double sin_theta = std::sin(theta);
   const double cos_alpha = std::cos(alpha);
   const double sin_alpha = std::sin(alpha);
 
   Eigen::Matrix4d transform;
-  transform << cos_theta, -sin_theta * cos_alpha, sin_theta * sin_alpha,
-      a * cos_theta,
+  transform << cos_theta, -sin_theta * cos_alpha, sin_theta * sin_alpha, a * cos_theta,
       sin_theta, cos_theta * cos_alpha, -cos_theta * sin_alpha, a * sin_theta,
       0.0, sin_alpha, cos_alpha, d,
       0.0, 0.0, 0.0, 1.0;
   return transform;
 }
 
-} // namespace baxter
+}  // namespace baxter

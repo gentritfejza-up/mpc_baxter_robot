@@ -3,7 +3,9 @@
   <name>baxter_dynamics</name>
   <version>1.0.0</version>
   <description>
-    Baxter Lagrange-Euler dynamics library, runtime node, and parameter configuration.
+    Joint-space dynamics for the Baxter MPC stack: the generic inverse-dynamics model
+    interface, the Lagrange-Euler model from a DH table (any number of revolute or
+    prismatic joints), the computed-torque law and the backend-independent torque loop.
   </description>
 
   <maintainer email="gentritfejza@gmail.com">Gentrit Fejza</maintainer>
@@ -13,6 +15,7 @@
 
   <depend>baxter_interface_cpp</depend>
   <depend>roscpp</depend>
+  <depend>std_msgs</depend>
 
   <build_depend>eigen3</build_depend>
   <build_export_depend>eigen3</build_export_depend>

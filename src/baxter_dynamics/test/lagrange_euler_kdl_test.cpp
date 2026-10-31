@@ -1,7 +1,8 @@
-// Compares the Lagrange-Euler inverse dynamics (DH model from
-// dynamics_params.yaml) against KDL's recursive Newton-Euler dynamics built
-// from the live /robot_description URDF. Both must agree on the mass matrix,
-// Coriolis/centrifugal vector and gravity vector up to the DH-rounding error.
+// Compares the Lagrange-Euler model (DH description from dynamics_params.yaml)
+// against KDL's recursive Newton-Euler dynamics built from the live
+// /robot_description URDF. Both must agree on the mass matrix, the
+// Coriolis/centrifugal vector and the gravity vector up to the DH-rounding
+// error, and the model must evaluate well within the 800 Hz loop period.
 
 #include <gtest/gtest.h>
 #include <kdl/chaindynparam.hpp>
@@ -11,17 +12,16 @@
 #include <urdf/model.h>
 
 #include <Eigen/Dense>
+#include <chrono>
 #include <random>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
+#include "baxter_dynamics/arm_description.hpp"
 #include "baxter_dynamics/lagrange_euler.hpp"
 
 namespace {
 
-const std::vector<std::string> kJoints = {"left_s0", "left_s1", "left_e0", "left_e1",
-                                          "left_w0", "left_w1", "left_w2"};
 constexpr int kN = 7;
 
 // Lumps `node` and every descendant reachable through fixed joints into one
@@ -66,39 +66,11 @@ KDL::Chain buildLumpedChain(const std::string& root, const std::string& tip) {
   return lumped;
 }
 
-std::unordered_map<std::string, double> toMap(const Eigen::VectorXd& v) {
-  std::unordered_map<std::string, double> out;
-  for (int i = 0; i < kN; ++i) out[kJoints[i]] = v(i);
-  return out;
-}
-
-Eigen::VectorXd toVec(const std::unordered_map<std::string, double>& m) {
-  Eigen::VectorXd out(kN);
-  for (int i = 0; i < kN; ++i) out(i) = m.at(kJoints[i]);
-  return out;
-}
-
 struct Terms {
   Eigen::MatrixXd M{Eigen::MatrixXd::Zero(kN, kN)};
   Eigen::VectorXd C{Eigen::VectorXd::Zero(kN)};
   Eigen::VectorXd G{Eigen::VectorXd::Zero(kN)};
 };
-
-// Recovers M, C and G from the torque interface: G = tau(q,0,0),
-// C = tau(q,qd,0) - G, M(:,i) = tau(q,0,e_i) - G.
-Terms lagrangeEulerTerms(baxter::LagrangeEuler& le, const Eigen::VectorXd& q,
-                         const Eigen::VectorXd& qd) {
-  Terms t;
-  const Eigen::VectorXd zero = Eigen::VectorXd::Zero(kN);
-  t.G = toVec(le.computeTorques(toMap(q), toMap(zero), toMap(zero)));
-  t.C = toVec(le.computeTorques(toMap(q), toMap(qd), toMap(zero))) - t.G;
-  for (int i = 0; i < kN; ++i) {
-    Eigen::VectorXd unit = Eigen::VectorXd::Zero(kN);
-    unit(i) = 1.0;
-    t.M.col(i) = toVec(le.computeTorques(toMap(q), toMap(zero), toMap(unit))) - t.G;
-  }
-  return t;
-}
 
 Terms kdlTerms(KDL::ChainDynParam& dyn, const Eigen::VectorXd& q, const Eigen::VectorXd& qd) {
   KDL::JntArray jq(kN), jqd(kN), c(kN), g(kN);
@@ -123,36 +95,37 @@ Terms kdlTerms(KDL::ChainDynParam& dyn, const Eigen::VectorXd& q, const Eigen::V
 
 TEST(LagrangeEulerKdl, MassCoriolisGravityMatchUrdf) {
   ros::NodeHandle nh;
-  // Compare raw model torques: disable the torque clamping applied by computeTorques.
-  for (const char* key : {"shoulder_elbow", "s1", "wrist"}) {
-    nh.setParam(std::string("robot/torque_limits/") + key + "_max", 1.0e6);
-    nh.setParam(std::string("robot/torque_limits/") + key + "_min", -1.0e6);
-  }
-  baxter::LagrangeEuler le("left", nh);
+  const baxter::ArmDescription arm = baxter::loadArmDescription(nh, "robot/arm_model", "left");
+  ASSERT_EQ(arm.jointCount(), static_cast<std::size_t>(kN));
+  baxter::LagrangeEuler le(arm);
+  EXPECT_EQ(le.jointNames().front(), "left_s0");
+  EXPECT_EQ(le.jointNames().back(), "left_w2");
+
   KDL::Chain chain = buildLumpedChain("torso", "left_wrist");
   ASSERT_EQ(chain.getNrOfJoints(), 7u);
   KDL::ChainDynParam dyn(chain, KDL::Vector(0.0, 0.0, -9.81));
 
-  const std::vector<std::pair<double, double>> limits = {
-      {-1.70, 1.70}, {-2.14, 1.04}, {-3.05, 3.05}, {-0.04, 2.61},
-      {-3.05, 3.05}, {-1.57, 2.09}, {-3.05, 3.05}};
   std::mt19937 rng(20260911);
   std::uniform_real_distribution<double> unit(-1.0, 1.0);
 
   double max_m = 0.0, max_c = 0.0, max_g = 0.0;
+  baxter::JointSpaceDynamics dynamics;
   for (int sample = 0; sample < 40; ++sample) {
     Eigen::VectorXd q(kN), qd(kN);
     for (int i = 0; i < kN; ++i) {
       const double u = 0.5 * (unit(rng) + 1.0);
-      q(i) = limits[i].first + u * (limits[i].second - limits[i].first);
+      const baxter::JointDescription& joint = arm.joints[i];
+      q(i) = joint.lower_limit + u * (joint.upper_limit - joint.lower_limit);
       qd(i) = unit(rng);
     }
-    const Terms a = lagrangeEulerTerms(le, q, qd);
+    le.evaluate(q, qd, dynamics);
     const Terms b = kdlTerms(dyn, q, qd);
-    max_m = std::max(max_m, (a.M - b.M).cwiseAbs().maxCoeff());
-    max_c = std::max(max_c, (a.C - b.C).cwiseAbs().maxCoeff());
-    max_g = std::max(max_g, (a.G - b.G).cwiseAbs().maxCoeff());
-    EXPECT_TRUE(((a.M - a.M.transpose()).cwiseAbs().maxCoeff()) < 1e-9) << "M not symmetric";
+    max_m = std::max(max_m, (dynamics.mass_matrix - b.M).cwiseAbs().maxCoeff());
+    max_c = std::max(max_c, (dynamics.coriolis_torque - b.C).cwiseAbs().maxCoeff());
+    max_g = std::max(max_g, (dynamics.gravity_torque - b.G).cwiseAbs().maxCoeff());
+    EXPECT_LT((dynamics.mass_matrix - dynamics.mass_matrix.transpose()).cwiseAbs().maxCoeff(),
+              1e-9)
+        << "M not symmetric";
   }
   ROS_INFO("max |M| diff %.2e kg m^2, max |C| diff %.2e Nm, max |G| diff %.2e Nm",
            max_m, max_c, max_g);
@@ -160,6 +133,26 @@ TEST(LagrangeEulerKdl, MassCoriolisGravityMatchUrdf) {
   EXPECT_LT(max_m, 2e-3);
   EXPECT_LT(max_c, 2e-3);
   EXPECT_LT(max_g, 2e-2);
+}
+
+TEST(LagrangeEulerKdl, EvaluationFitsTheTorqueLoopPeriod) {
+  ros::NodeHandle nh;
+  baxter::LagrangeEuler le(baxter::loadArmDescription(nh, "robot/arm_model", "right"));
+  baxter::JointSpaceDynamics dynamics;
+  Eigen::VectorXd q = Eigen::VectorXd::LinSpaced(kN, -0.5, 0.5);
+  Eigen::VectorXd qd = Eigen::VectorXd::LinSpaced(kN, -1.0, 1.0);
+  le.evaluate(q, qd, dynamics);  // warm up (allocates the scratch tables)
+
+  constexpr int kIterations = 2000;
+  const auto start = std::chrono::steady_clock::now();
+  for (int i = 0; i < kIterations; ++i) {
+    q(i % kN) += 1e-4;
+    le.evaluate(q, qd, dynamics);
+  }
+  const double mean_us = std::chrono::duration<double, std::micro>(
+                             std::chrono::steady_clock::now() - start).count() / kIterations;
+  ROS_INFO("Lagrange-Euler evaluate: %.1f us per call", mean_us);
+  EXPECT_LT(mean_us, 300.0);  // 800 Hz leaves 1250 us per loop iteration.
 }
 
 int main(int argc, char** argv) {

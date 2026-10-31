@@ -17,6 +17,8 @@
   <arg name="limb" default="left" doc="Arm to control when both_arms is false" />
   <arg name="auto_enable" default="true" doc="Enable the robot with the SDK tool after launch" />
   <arg name="inner_pd" default="true" doc="Computed-torque PD around the MPC trajectory" />
+  <arg name="dynamics_backend" default="kdl"
+       doc="Torque-loop model: kdl (from the robot's URDF) or lagrange_euler (DH table)" />
   <arg name="geometry" default="true" doc="Enable the MPC collision guard" />
   <arg name="guard_mode" default="reject" doc="Collision guard: reject | warn | off" />
   <arg name="rviz" default="false" doc="Open RViz with the collision-guard markers" />
@@ -39,24 +41,26 @@
   <param name="robot/geometry/conveyor/y" type="double" value="$(arg conveyor_y)" />
   <param name="robot/geometry/conveyor/yaw" type="double" value="$(arg conveyor_yaw)" />
 
-  <!-- Torque loops: gravity comes from the robot, URDF effort limits. -->
-  <include file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
+  <!-- Torque loops: gravity comes from the robot, hardware effort limits, no damping term. -->
+  <arg name="torque_launch"
+       value="$(eval find('baxter_dynamics') + '/launch/lagrange_euler.launch' if arg('dynamics_backend') == 'lagrange_euler' else find('baxter_kdl_dynamics') + '/launch/kdl_inverse_dynamics.launch')" />
+  <include file="$(arg torque_launch)">
     <arg name="limb" value="$(arg limb)" />
     <arg name="add_gravity_compensation" value="false" />
-    <arg name="compensate_urdf_damping" value="false" />
-    <arg name="aggregate_tip_subtree_inertia" value="true" />
+    <arg name="compensate_viscous_damping" value="false" />
     <arg name="s1_torque_limit_override" value="-1.0" />
   </include>
-  <include if="$(arg both_arms)" file="$(find baxter_kdl_dynamics)/launch/kdl_inverse_dynamics.launch">
+  <include if="$(arg both_arms)" file="$(arg torque_launch)">
     <arg name="limb" value="$(arg other_limb)" />
     <arg name="add_gravity_compensation" value="false" />
-    <arg name="compensate_urdf_damping" value="false" />
-    <arg name="aggregate_tip_subtree_inertia" value="true" />
+    <arg name="compensate_viscous_damping" value="false" />
     <arg name="s1_torque_limit_override" value="-1.0" />
   </include>
   <group unless="$(arg inner_pd)">
     <rosparam param="robot/kdl_dynamics/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
     <rosparam param="robot/kdl_dynamics/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kp">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
+    <rosparam param="robot/lagrange_euler/kd">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</rosparam>
   </group>
 
   <!-- MPC nodes. -->

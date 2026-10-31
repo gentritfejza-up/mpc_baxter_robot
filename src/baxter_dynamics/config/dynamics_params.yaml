@@ -1,26 +1,27 @@
-# Dynamics configuration of the Baxter arm for the Lagrange-Euler backend
-# (baxter_dynamics). All link quantities are listed in kinematic order
-# s0, s1, e0, e1, w0, w1, w2; link 7 lumps the wrist, hand and gripper base.
+# Lagrange-Euler backend of the torque loop (baxter_dynamics).
+#
+# robot/arm_model describes the serial chain the model is built from (read by
+# loadArmDescription): any number of revolute or prismatic joints, keyed tables
+# per joint and lists per link in joint order. Per-joint tables are keyed by the
+# joint name without the "<arm>_" prefix (left_s0 -> s0); a full joint name is
+# accepted too. robot/lagrange_euler holds the torque-law and idle-hold settings
+# with the same keys as robot/kdl_dynamics, so launch files can treat both
+# backends alike.
 
 robot:
-  limb:
-    # Not read by the current code; kept so existing parameter dumps still load.
-    segment_names: ["l1", "d1", "l2", "d2", "l3", "d3", "l4", "d4"]
-    left: ["left_s0", "left_s1", "left_e0", "left_e1", "left_w0", "left_w1", "left_w2"]
-    right: ["right_s0", "right_s1", "right_e0", "right_e1", "right_w0", "right_w1", "right_w2"]
+  arm_model:
+    # Ordered joint names of each arm, base to tip.
+    joints:
+      left: ["left_s0", "left_s1", "left_e0", "left_e1", "left_w0", "left_w1", "left_w2"]
+      right: ["right_s0", "right_s1", "right_e0", "right_e1", "right_w0", "right_w1", "right_w2"]
 
-    # Not read by the current code (the DH table below carries the lengths) [m].
-    segment_lengths:
-      l1: 0.27035
-      d1: 0.069
-      l2: 0.36435
-      d2: 0.069
-      l3: 0.37429
-      d3: 0.01
-      l4: 0.229525
-      d4: 0.0
+    # Gravitational acceleration in the DH base frame (frame 0) [m/s^2].
+    gravity: [0.0, 0.0, -9.81]
 
-    # [lower, upper] joint angle limits [rad].
+    # Optional: revolute (default) or prismatic per joint.
+    # joint_types: {s0: revolute}
+
+    # [lower, upper] joint position limits [rad].
     angle_limits:
       s0: [-1.701679, 1.701679]
       s1: [-2.146754, 1.0472]
@@ -31,7 +32,8 @@ robot:
       w2: [-3.059, 3.059]
 
     # Classic DH rows [d (m), theta_offset (rad), a (m), alpha (rad)];
-    # ^{i-1}T_i = Rz(theta_offset + q_i) Tz(d) Tx(a) Rx(alpha).
+    # ^{i-1}T_i = Rz(theta_offset + q_i) Tz(d) Tx(a) Rx(alpha) for a revolute
+    # joint (Tz(d + q_i) for a prismatic one).
     dh_parameters:
       s0: [0.27035, 0.0, 0.069, -1.570796327]
       s1: [0.0, 1.570796327, 0.0, 1.570796327]
@@ -41,9 +43,38 @@ robot:
       w1: [0.0, 0.0, 0.0, 1.570796327]
       w2: [0.229525, 0.0, 0.0, 0.0]
 
-    # URDF inertia tensor of each link about its centre of mass, rotated into
-    # the DH link frame, URDF sign convention (Ixy = -integral(x*y dm)) [kg m^2].
-    inertia:
+    # Symmetric torque saturation per joint [Nm]: the URDF effort limits of
+    # Baxter (the real robot's hardware limits). The simulator may raise s1 via
+    # robot/lagrange_euler/torque_limit_overrides/s1.
+    effort_limits:
+      s0: 50.0
+      s1: 50.0
+      e0: 50.0
+      e1: 50.0
+      w0: 15.0
+      w1: 15.0
+      w2: 15.0
+
+    # Viscous joint damping b in tau = b qd [Nm s/rad] (the URDF value Gazebo
+    # applies; compensated when compensate_viscous_damping is true).
+    viscous_damping:
+      s0: 0.7
+      s1: 0.7
+      e0: 0.7
+      e1: 0.7
+      w0: 0.7
+      w1: 0.7
+      w2: 0.7
+
+    # Inertial parameters of the link moved by each joint, in joint order
+    # (s0, s1, e0, e1, w0, w1, w2); the last link lumps wrist, hand and gripper
+    # base. Inertia tensors are about the centre of mass, rotated into the DH
+    # link frame, URDF sign convention (Ixy = -integral(x*y dm)) [kg m^2].
+    links:
+      mass: [5.70044, 3.22698, 4.31272, 2.07206, 2.24665, 1.60979, 0.84228]   # [kg]
+      com_x: [-0.05117, 0.00269, -0.07176, 0.00159, -0.01168, 0.00697, 0.0033067]  # [m]
+      com_y: [0.07908, -0.00529, 0.08149, -0.01117, 0.13111, 0.00600, 0.0006162]
+      com_z: [0.00086, 0.06845, 0.00132, 0.02618, 0.00460, 0.06048, -0.0340665]
       Ixx: [0.0470910226, 0.0278859752, 0.0266173356, 0.0131822788, 0.0166774283, 0.0070053791, 0.0028495703]
       Iyy: [0.0359598848, 0.020787493, 0.0124800832, 0.0092685206, 0.0037463115, 0.0055275524, 0.0029160738]
       Izz: [0.0376697645, 0.0117520942, 0.0284435521, 0.0071158269, 0.0167545726, 0.0038760715, 0.0005601715]
@@ -51,30 +82,48 @@ robot:
       Iyz: [-0.000780869, 0.0020767576, -0.0010838933, 0.0007459496, 0.0006473235, -0.0002111504, 2.17158e-05]
       Izx: [0.0001278756, -0.000300964, 0.0002927063, 0.0003603617, 0.0001840371, -0.0004438478, 2.5727e-05]
 
-    # Centre of mass of each link in its DH frame, homogeneous coordinates [m, m, m, 1].
-    com_x: [-0.05117, 0.00269, -0.07176, 0.00159, -0.01168, 0.00697, 0.0033067]
-    com_y: [0.07908, -0.00529, 0.08149, -0.01117, 0.13111, 0.00600, 0.0006162]
-    com_z: [0.00086, 0.06845, 0.00132, 0.02618, 0.00460, 0.06048, -0.0340665]
-    com_w: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    # Optional rigid payload lumped into the last link, expressed in its DH frame
+    # (com [x, y, z] [m]; inertia [Ixx, Iyy, Izz, Ixy, Iyz, Izx] about the payload's
+    # centre of mass [kg m^2]). The values below are the electric gripper's finger
+    # links of the stock URDF (two fingers plus two finger tips, 0.06 kg), whose
+    # 0.01 kg m^2 inertias are about 1000x too large but are what Gazebo simulates
+    # and what the KDL backend lumps into its tip; without them the simulated w2
+    # cannot be braked by the model. Enable in simulation (lagrange_euler.launch
+    # lump_tip_payload:=true), leave off on the real robot.
+    tip_payload:
+      enabled: false
+      mass: 0.06
+      com: [0.0, 0.0, 0.0826367]
+      inertia: [0.0401744018, 0.0401693505, 0.0400050513, 0.0, 0.0, 0.0]
 
-    # Link masses [kg].
-    link_masses: [5.70044, 3.22698, 4.31272, 2.07206, 2.24665, 1.60979, 0.84228]
-
-    # Derivative operator of a revolute joint about z, 4x4 row major.
-    Q_j: [0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-
-  # Computed-torque PD around the MPC trajectory (same gains as the KDL backend).
+  # Torque law and idle hold of the Lagrange-Euler loop (same keys as robot/kdl_dynamics).
   lagrange_euler:
+    # Gazebo: true. The real Baxter adds its own gravity compensation in torque mode: false.
+    add_gravity_compensation: true
+    # Add back the viscous joint damping of the arm model (b * qd).
+    compensate_viscous_damping: true
+    # Inner computed-torque PD on the MPC trajectory,
+    # qdd = a_mpc + kp*(q_ref - q) + kd*(v_ref - v); critically damped at ~8 rad/s.
+    # baxter_mpc.launch zeroes both unless inner_pd:=true (pure feedforward in Gazebo).
     kp: [60.0, 60.0, 60.0, 60.0, 60.0, 60.0, 60.0]   # [1/s^2]
     kd: [15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0]   # [1/s]
+    # Track q0 + v0*t + a*t^2/2 from the MPC sample time, t clamped to the maximum.
     extrapolate_reference: true
     max_reference_extrapolation_sec: 0.1
+    # Without an MPC reference, hold the current pose in torque mode (see
+    # kdl_dynamics.yaml for the rationale) with a torque-space PD per joint.
+    hold_when_idle: true
+    hold_mode: torque
+    hold_kp: [50.0, 60.0, 30.0, 30.0, 8.0, 6.0, 4.0]    # [Nm/rad]
+    hold_kd: [20.0, 24.0, 10.0, 10.0, 1.5, 1.0, 0.6]    # [Nm s/rad]
+    # A joint step above this between two loop iterations is a teleport [rad].
+    teleport_jump_rad: 0.2
+    # Per-joint effort limit replacements [Nm], e.g. {s1: 100.0} in the simulator.
+    torque_limit_overrides: {}
 
-  # Per joint-group torque clamps applied to the computed torques [N m].
-  torque_limits:
-    shoulder_elbow_max: 50.0
-    shoulder_elbow_min: -50.0
-    s1_max: 50.0
-    s1_min: -50.0
-    wrist_max: 20.0
-    wrist_min: -20.0
+  control:
+    lagrange_euler_rate_hz: 800.0
+    lagrange_euler_diagnostics_rate_hz: 50.0
+    # MPC references older than this are stale; also the joint-command timeout.
+    acceleration_ref_timeout_sec: 0.3
+    spinner_threads: 5

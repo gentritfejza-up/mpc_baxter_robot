@@ -52,8 +52,9 @@ GEOMETRY_FIELDS = (
     "linearize_ms",
     "guard_ms",
 )
-#: Per-joint blocks of /robot/limb/<limb>/kdl_dynamics_diagnostics after the
-#: KDL_METADATA_COUNT scalars (kdl_inverse_dynamics_node.cpp, layout "v1").
+#: Per-joint blocks of /robot/limb/<limb>/torque_loop_diagnostics after the
+#: KDL_METADATA_COUNT scalars (baxter_dynamics torque_loop.cpp, layout "v1"; the
+#: topic is the same for the KDL and the Lagrange-Euler backend).
 KDL_FIELDS = (
     "position",
     "velocity",
@@ -156,7 +157,7 @@ class Recorder:
                          self._on_target, queue_size=10)
         rospy.Subscriber(topic_prefix + "gravity_compensation_torques", SEAJointState,
                          self._on_sea_state, queue_size=10)
-        rospy.Subscriber(topic_prefix + "kdl_dynamics_diagnostics", Float64MultiArray,
+        rospy.Subscriber(topic_prefix + "torque_loop_diagnostics", Float64MultiArray,
                          self._on_kdl_diagnostics, queue_size=10)
         rospy.Subscriber(topic_prefix + "mpc_geometry_diagnostics", Float64MultiArray,
                          self._on_geometry_diagnostics, queue_size=10)

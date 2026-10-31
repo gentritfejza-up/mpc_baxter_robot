@@ -4,7 +4,7 @@
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus)](#)
 [![Python 3.8](https://img.shields.io/badge/Python-3.8-3776AB?logo=python)](#)
 [![Gazebo 11](https://img.shields.io/badge/Gazebo-11-F58113)](#)
-[![Tests](https://img.shields.io/badge/unit_tests-48_passing-brightgreen)](#development)
+[![Tests](https://img.shields.io/badge/unit_tests-28_cases_passing-brightgreen)](#development)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A real-time control stack for the Rethink Baxter robot: a convex model predictive controller
@@ -19,7 +19,12 @@ validated in Gazebo and prepared for the real robot.
 > its results, please credit the author and the thesis; see [Citation](#citation).
 
 <p align="center">
-  <img src="docs/dataflow.gif" alt="Animated data flow: reference, MPC, torque loop, robot, state feedback" width="900">
+  <img src="docs/architecture.svg" alt="Control architecture of the Baxter MPC stack: reference, MPC planners, torque loops, plant, state feedback" width="900">
+</p>
+
+<p align="center">
+  <img src="docs/dataflow.gif" alt="Animated data flow: reference, MPC, torque loop, robot, state feedback" width="900"><br>
+  <em>One control cycle: reference, MPC plan, torque, state feedback.</em>
 </p>
 
 ## Contents
@@ -45,7 +50,7 @@ validated in Gazebo and prepared for the real robot.
 | Joint-space MPC per arm: tracks a reference pose with joint position, velocity, acceleration and jerk limits, soft state bounds, braking fallback | `baxter_mpc_controller` | 50 Hz, ~12 ms per cycle |
 | Collision guard inside the QP: conveyor floor, torso, head, pedestal, drop boxes and the other arm as linear rows on the predicted trajectory, plus a plan check that brakes instead of commanding an unsafe plan | `baxter_mpc_controller` | every MPC cycle |
 | Computed-torque loop: `tau = M(q) qdd + C(q, qd) + g(q)` from the URDF (KDL) or from the author's own Lagrange-Euler derivation, optional inner PD, torque-space idle hold | `baxter_kdl_dynamics`, `baxter_dynamics` | 800 Hz, 0.07 ms per cycle |
-| Two-arm pick-and-place on a moving belt: object prediction, grasp, carry, drop, continuous object supply | `scripts/pick_and_place_demo.py` | 20 Hz state machine |
+| Two-arm pick-and-place on a moving belt: object prediction, grasp, carry, drop, continuous object supply | `simulator_demo/scripts/pick_and_place_demo.py` | 20 Hz state machine |
 | Simulation, validation scenarios, diagnostics recording and summaries, RViz visualisation of the guard | launch files and scripts | |
 
 ## Architecture
@@ -126,14 +131,15 @@ reference pose q_ref  (dynamic_reconfigure, <= 10 Hz)
 
 | Path | Contents |
 |---|---|
-| `src/baxter_mpc_controller/` | MPC node (`mpc_controller*.cpp`), collision geometry (`arm_collision_model`, `collision_primitives`, `geometry_rows`, `geometry_markers`), other-arm listener, solver benchmark, launch files, configs, Gazebo models (`conveyor_ct6030`, `pick_cuboid`, `drop_box`), scripts, unit tests |
-| `src/baxter_kdl_dynamics/` | URDF-based computed-torque loop (KDL), idle hold, diagnostics |
-| `src/baxter_dynamics/` | The author's Lagrange-Euler dynamics of the 7-DOF arm from a DH model, verified against KDL; alternative torque-loop backend |
+| `src/baxter_mpc_controller/` | MPC node (`mpc_controller*.cpp`), collision geometry (`arm_collision_model`, `collision_primitives`, `geometry_rows`, `geometry_markers`), other-arm listener, solver benchmark, the single-arm and real-robot launch files, configs, diagnostics scripts, unit tests |
+| `src/simulator_demo/` | Gazebo stack (`baxter_mpc.launch`: simulator, conveyor, torque loops, MPC nodes, validation scenarios), the pick-and-place demo (`pick_and_place_demo.launch`, `scripts/pick_and_place_demo.py`), Gazebo models (`conveyor_ct6030`, `pick_cuboid`, `drop_box`), simulation helpers |
+| `src/baxter_dynamics/` | The torque loop (`torque_loop`, `computed_torque_law`), the backend-independent model interface (`inverse_dynamics_model`) and the author's Lagrange-Euler model for any serial chain of revolute or prismatic joints from a DH table (`arm_description`, `forward_kinematics`, `lagrange_euler`), verified against KDL and on textbook arms |
+| `src/baxter_kdl_dynamics/` | The KDL model built from the live URDF, behind the same interface |
 | `src/baxter_interface_cpp/` | C++ wrappers for the Baxter SDK limb and gripper topics |
 | `src/baxter_kinematics/` | Tip forward kinematics and Jacobian helper |
 | `src/baxter_simulator/`, `src/baxter_common/`, `src/baxter_interface/`, `src/baxter_tools/`, `src/baxter_examples/`, `src/baxter/` | Upstream Rethink Robotics packages (unchanged except the simulator's s1 effort limit) |
 | `docker/` | CUDA-enabled ROS Noetic image and compose service used for everything below |
-| `docs/` | The data-flow animation and the script that renders it |
+| `docs/` | The architecture diagram and the control-cycle animation shown above |
 | `Taskfile.yml` | One-line commands for building, simulating, validating and the demo |
 
 ## Quick start
@@ -160,7 +166,7 @@ task run:demo BELT_SPEED=0.08 OBJECTS=8 DURATION=300
 task run:demo GUI=false RVIZ=false             # headless, only the log and DEMO RESULT lines
 ```
 
-Equivalent inside the container: `roslaunch baxter_mpc_controller pick_and_place_demo.launch
+Equivalent inside the container: `roslaunch simulator_demo pick_and_place_demo.launch
 [belt_speed:=0.05] [objects:=6] [duration:=180] [gui:=true] [rviz:=true] [inner_pd:=true]`.
 The demo keeps the torque loops' inner PD on (a held cuboid is an unmodelled load); the
 validation scenarios run pure feedforward.
@@ -241,11 +247,16 @@ Lagrange-Euler backend in the full simulation stack.
 
 ### Torque loop
 
-- `baxter_kdl_dynamics` builds the KDL chain from the live URDF (`torso -> <side>_gripper_base`),
-  lumps the fixed-joint subtree beyond the tip into the tip inertia, and computes
-  `tau = M qdd + C qd + g` plus compensation of the URDF viscous damping. In Gazebo the
-  inner PD is off (the plant is the model itself, and the MPC re-plans from the measured state
-  at 50 Hz); on the real robot it is on.
+- One torque loop (`baxter_dynamics/torque_loop.cpp`) serves both backends: it reads the
+  joint state and the MPC reference through the limb interface, evaluates the computed-torque
+  law `tau = M qdd + C qd [+ g] [+ b qd]` on whatever `InverseDynamicsModel` it was given
+  (`M`, `C qd`, `g`, effort limits and viscous damping per joint), saturates, publishes the
+  torque command and the diagnostics, and holds the pose while idle. In Gazebo the inner PD
+  is off (the plant is the model itself, and the MPC re-plans from the measured state at
+  50 Hz); on the real robot it is on.
+- `baxter_kdl_dynamics` is the default model: the KDL chain from the live URDF
+  (`torso -> <side>_gripper_base`) with the fixed-joint subtree beyond the tip lumped into the
+  tip inertia, effort limits and viscous damping read from the URDF joints.
 - Whenever it has no (or a stale) MPC acceleration reference, the loop holds the pose in torque
   mode with gravity compensation plus a torque-space PD per joint (`hold_kp` in Nm/rad,
   `hold_kd` in Nm s/rad), anchored where the hold engaged and re-anchored when a joint jumps by
@@ -253,10 +264,17 @@ Lagrange-Euler backend in the full simulation stack.
   moves the simulator's position-to-torque hand-over to the enable instant, while the MPC still
   idles. The PD must act in torque space: an acceleration-space PD scaled by the inertia gave
   the simulated wrists only 0.6 Nm/rad, too little to pull a joint off a limit stop.
-- `baxter_dynamics` is the author's closed-form Lagrange-Euler model from DH parameters
-  (pseudo-inertia matrices, `U_ij` and `U_ijk` derivative matrices); its `M`, `C` and `g` match
-  KDL built from the URDF to about 1e-3 (`lagrange_euler_kdl.test`). Link 7 lumps wrist, hand
-  and gripper. The electric gripper finger links in the stock URDF carry `0.01 kg m^2` inertias
+- `baxter_dynamics/lagrange_euler.cpp` is the author's closed-form Lagrange-Euler model
+  (pseudo-inertia matrices, `U_ij` and `U_ijk` derivative matrices, see the equations in the
+  header). It is generic: an `ArmDescription` with any number of revolute or prismatic joints,
+  a DH row, limits and inertial parameters per joint and a gravity vector, loaded from
+  `robot/arm_model` or built in code. Its `M`, `C` and `g` match KDL built from the Baxter URDF
+  to about 1e-3 (`lagrange_euler_kdl.test`) and the textbook closed forms of a planar two-link
+  arm and a prismatic lift (`planar_arm_test`); one evaluation takes about 0.1 ms. Link 7
+  lumps wrist, hand and gripper base; an optional tip payload (`robot/arm_model/tip_payload`,
+  `lump_tip_payload:=true` in simulation) lumps the simulator's gripper fingers into it, the
+  same bodies the KDL backend lumps, without which the simulated w2 cannot be braked. Select
+  the backend with `dynamics_backend:=lagrange_euler`. The electric gripper finger links in the stock URDF carry `0.01 kg m^2` inertias
   (about 1000x too large); do not "fix" them for simulation, with realistic values the simulated
   w2 no longer tracks because ODE damping and stop friction dominate.
 
@@ -269,7 +287,7 @@ Lagrange-Euler backend in the full simulation stack.
   robot's built-in gravity compensation) through `/gazebo/set_link_properties`, and that call
   races with the robot spawn. When it wins, the arms are weightless while the torque loop adds
   full gravity compensation and both arms drift up at a steady rate until the elbows hit their
-  stops. `scripts/enforce_arm_gravity.py`, started by `baxter_mpc.launch`, turns gravity back on
+  stops. `simulator_demo/scripts/enforce_arm_gravity.py`, started by `baxter_mpc.launch`, turns gravity back on
   for the arm links during the first 40 s, so the simulated plant always matches the model.
 - `set_model_configuration` (teleporting joints) is unreliable while controllers run; the demo
   therefore lets the MPC drive the arms from the rest pose to home (`--teleport-home` keeps the
@@ -289,7 +307,7 @@ a KDL Levenberg-Marquardt IK in the script, seeded from the current joints; for 
 drop poses several gripper orientations are tried and the one whose arm pose keeps the most
 clearance from the body keep-outs wins (evaluated with the guard's own spheres and primitives,
 read from the parameter server). References reach the MPC through dynamic reconfigure,
-rate-limited to 10 Hz and change-gated. `config/collision_geometry_demo.yaml` adds the boxes to
+rate-limited to 10 Hz and change-gated. `simulator_demo/config/collision_geometry_demo.yaml` adds the boxes to
 the keep-outs; the demo launch lowers `floor_margin` to 0.025 m so the fingertips reach the
 cuboids.
 
@@ -314,9 +332,10 @@ in the YAML files):
 | `robot.geometry.floor.{activate_at_home,home_tolerance_rad,home_position}` | floor arming |
 | `robot.geometry.conveyor.{enabled,x,y,yaw,length,width,belt_width,height}` | conveyor drawn in RViz and spawned in Gazebo |
 | `robot.collision_geometry.{arm_spheres,body}` | sphere and primitive definitions (`collision_geometry.yaml`) |
-| `robot.kdl_dynamics.{add_gravity_compensation,compensate_urdf_damping,kp,kd,extrapolate_reference}` | torque loop |
-| `robot.kdl_dynamics.{hold_when_idle,hold_mode,hold_kp,hold_kd,teleport_jump_rad}` | idle hold |
-| `robot.lagrange_euler.{kp,kd,extrapolate_reference}`, `robot.limb.*`, `robot.torque_limits.*` | Lagrange-Euler backend and its DH model (`dynamics_params.yaml`) |
+| `robot.kdl_dynamics.{add_gravity_compensation,compensate_viscous_damping,kp,kd,extrapolate_reference}` | torque law (KDL backend; `robot.lagrange_euler.*` has the same keys for the Lagrange-Euler backend) |
+| `robot.kdl_dynamics.{hold_when_idle,hold_mode,hold_kp,hold_kd,teleport_jump_rad}` | idle hold (same keys under `robot.lagrange_euler`) |
+| `robot.kdl_dynamics.{root_link,tip_link,aggregate_tip_subtree_inertia,s1_torque_limit_override,gravity}` | KDL model (`kdl_dynamics.yaml`) |
+| `robot.arm_model.{joints,gravity,joint_types,dh_parameters,angle_limits,effort_limits,viscous_damping,links}`, `robot.lagrange_euler.torque_limit_overrides` | Lagrange-Euler arm description (`dynamics_params.yaml`) |
 
 Dynamic reconfigure on each MPC node: `ref_0..6` (target joint angles), `pos_weight_0..6`,
 `accel_weight_0..6`.
@@ -328,7 +347,7 @@ summarised with `summarize_control_diagnostics.py`.
 
 | Experiment | Result |
 |---|---|
-| 20-pose tracking regression without the guard | 20/20 settled within 0.02 rad, mean final error 1e-4 rad, median settle 2.3 s, no torque saturation (baseline before the work: 18/50) |
+| 20-pose tracking regression without the guard | 20/20 settled within 0.02 rad, mean final error 1e-4 rad, median settle 2.3 s, no torque saturation (an earlier version: 18/50) |
 | 20-pose regression with the guard and the conveyor | 18/21 settled to 1e-4 rad (two references inside a keep-out park at the margin), body clearance never below the margin, 0 guard rejections, cycle median 11 ms |
 | Floor scenario (reference 0.55 m below the belt) | fingertips come to rest 2.7 to 3.5 cm above the belt, three of three runs |
 | Belt scenario (pick pose 0.059 m above the belt, then below) | pick pose settled in 1.0 s, then rests at the belt limit |
@@ -336,6 +355,8 @@ summarised with `summarize_control_diagnostics.py`.
 | Crossing arms (both sent to the same spot) | both arms home, kept apart at the margin, 0.08 m minimum distance |
 | Pick-and-place demo, 180 s, belt 0.05 m/s, six cuboids (`task run:demo`, inner PD on) | **38 placed, 1 missed grasp**, 0 guard rejections, 0 velocity recoveries, MPC in control 3 s after launch, ~8 s per pick-and-place cycle per arm, drop in 1.1 s |
 | Same demo with pure feedforward torque (`inner_pd:=false`) | 35 placed, 6 missed (two 90 s headless runs: 17/2 off vs 17/1 on); the demo launch therefore keeps the PD on |
+| Lagrange-Euler backend (`dynamics_backend:=lagrange_euler`, fingers lumped as tip payload), 20-pose regression with the guard | 18/21 settled to 1e-4 rad, median settle 2.8 s, 0 saturations, torque-loop compute 0.05 ms per iteration; KDL on the same day and code: 17/21, median settle 4.7 s, compute 0.07 ms. One reference (pose 12, inside the floor keep-out) makes e0 overshoot by about 1 rad and dip through the floor for 0.4 s during the braking fallback with either backend: an open MPC issue, not a model one |
+| Lagrange-Euler backend, 90 s headless demo (inner PD on) | 17 placed, 2 missed (KDL: 17 placed, 1 missed), 0 guard rejections, floor clearance never below 0.050 m |
 
 MPC cycle time with the 900 geometry rows: median 11 to 12 ms, p90 14 to 30 ms; about 3 % of
 cycles exceed the 20 ms deadline and are commanded late. Without the guard: 3 to 5 ms.
@@ -368,14 +389,16 @@ within reach, and run the demo only after the clearances in RViz look right.
 task docker:up && task docker:shell
 catkin_make                                        # inside the container, /workspace
 catkin_make run_tests_baxter_mpc_controller && catkin_test_results build/test_results
-catkin_make run_tests_baxter_dynamics              # Lagrange-Euler vs KDL
+catkin_make run_tests_baxter_dynamics              # Lagrange-Euler vs KDL and textbook arms
 ```
 
-Unit tests (45): collision primitives (analytic distances, gradients against finite
+Unit tests (28 cases in six test programs): collision primitives (analytic distances, gradients against finite
 differences), the sphere model against KDL forward kinematics and Jacobians, the row
-linearisation algebra, and the QP with geometry rows (inactive rows reproduce the plain
+linearisation algebra, the QP with geometry rows (inactive rows reproduce the plain
 controller, an active floor row is respected, an unsatisfiable row uses slack, bad batches are
-rejected). Doxygen comments in every header describe the classes, units and equations;
+rejected), and the Lagrange-Euler model (against KDL on the Baxter URDF, against the closed
+forms of a planar two-link arm and a prismatic lift, the energy identity of the Coriolis term
+and the potential-energy gradient on a mixed revolute/prismatic chain, evaluation time). Doxygen comments in every header describe the classes, units and equations;
 `doxygen` with a default `Doxyfile` over `src/baxter_*` renders them.
 
 Workflow notes: both containers (`mpc_baxter_robot_dev` with GPU and X11, `mpc_baxter_validate`)
@@ -392,9 +415,11 @@ share the repository mount at `/workspace`, so only one Gazebo at a time; give G
 - **Why KDL and not Pinocchio.** The MPC does not use the full dynamics (the torque loop does),
   and the torque loop computes `M`, `C`, `g` in 0.07 ms at 800 Hz with KDL. Pinocchio would be
   worth it for a full nonlinear MPC with analytical derivatives, not for this architecture.
-- **Why two dynamics backends.** The Lagrange-Euler derivation is the thesis' own model and is
-  verified against KDL; KDL is the default because it is built from the live URDF of whichever
-  robot is connected.
+- **Why two dynamics backends behind one interface.** The Lagrange-Euler derivation is the
+  thesis' own model and is verified against KDL; KDL is the default because it is built from the
+  live URDF of whichever robot is connected. Both implement `InverseDynamicsModel`, so the
+  torque loop, the idle hold, the teleport detection and the diagnostics exist once and the
+  backend is a launch argument; the Lagrange-Euler model itself is not tied to Baxter.
 - **Why the guard is soft constraints plus a check.** Soft rows keep the QP feasible under any
   measured state; the explicit plan check catches linearisation error on fast motions and only
   brakes when a plan would make a penetration worse, so an arm that starts inside a margin can
@@ -407,7 +432,7 @@ Please cite the thesis when you use this work (see also `CITATION.cff`):
 ```bibtex
 @mastersthesis{Fejza2026BaxterMPC,
   author  = {Gentrit Fejza},
-  title   = {Model Predictive Control with Collision Avoidance for the Baxter Robot on a Conveyor Pick-and-Place Task},
+  title   = {Implementation of MPC Controller for Baxter Robot},
   school  = {University of Prishtina, Faculty of Electrical and Computer Engineering, Electronics, Automation and Robotics},
   year    = {2026},
   address = {Prishtina},
@@ -422,7 +447,7 @@ submodules), CasADi, OSQP, KDL, ROS Noetic.
 
 The code in this repository written for the thesis (`src/baxter_mpc_controller`,
 `src/baxter_kdl_dynamics`, `src/baxter_dynamics`, `src/baxter_kinematics`,
-`src/baxter_interface_cpp`, `docs/`, `Taskfile.yml`, `docker/`) is released under the
+`src/baxter_interface_cpp`, `src/simulator_demo`, `docs/`, `Taskfile.yml`, `docker/`) is released under the
 [MIT License](LICENSE), copyright 2026 Gentrit Fejza. The upstream Baxter packages keep their
 own licenses (BSD, Rethink Robotics). The license permits reuse; the thesis still asks to be
 cited, see [Citation](#citation).

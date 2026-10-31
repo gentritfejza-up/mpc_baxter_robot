@@ -20,7 +20,7 @@ keywords:
 preferred-citation:
   type: thesis
   thesis-type: "Master's thesis"
-  title: "Model Predictive Control with Collision Avoidance for the Baxter Robot on a Conveyor Pick-and-Place Task"
+  title: "Implementation of MPC Controller for Baxter Robot"
   authors:
     - family-names: Fejza
       given-names: Gentrit

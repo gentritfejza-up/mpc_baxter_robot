@@ -40,12 +40,13 @@ tasks:
       - docker compose -f {{.COMPOSE_FILE}} down
 
   run:sim:
-    desc: Start Baxter in Gazebo (leave running in its own terminal)
+    desc: Start Baxter in Gazebo with the arm-gravity helper (leave running in its own terminal)
     deps: [docker:up]
     cmds:
       - >-
-        docker compose -f {{.COMPOSE_FILE}} exec {{.SERVICE}}
-        bash -lc '{{.ROS_SETUP}} && exec roslaunch baxter_gazebo baxter_world.launch'
+        docker compose -f {{.COMPOSE_FILE}} exec
+        -e __NV_PRIME_RENDER_OFFLOAD=1 -e __GLX_VENDOR_LIBRARY_NAME=nvidia {{.SERVICE}}
+        bash -lc '{{.ROS_SETUP}} && exec roslaunch simulator_demo baxter_world.launch'
 
   run:mpc:
     desc: Start MPC with the current simulated joint positions as its initial target
@@ -115,7 +116,7 @@ tasks:
         roslaunch simulator_demo baxter_mpc.launch
         gui:={{.GUI}} headless:={{if eq .GUI "true"}}false{{else}}true{{end}} rviz:={{.RVIZ}}
         limb:={{.LIMB}} pose_count:={{.POSES}} scenario:={{.SCENARIO}} both_arms:={{.BOTH_ARMS}} dynamics_backend:={{.BACKEND}} {{if .Z_MIN}}z_min:={{.Z_MIN}}{{end}}
-        reference_interval_sec:={{.DWELL}} diagnostics_file:={{.OUT}} shutdown_after_references:=true;
+        reference_interval_sec:={{.DWELL}} diagnostics_file:={{.OUT}} shutdown_after_references:=true &&
         rosrun baxter_mpc_controller summarize_control_diagnostics.py {{.OUT}} --per-pose'
 
   run:demo:

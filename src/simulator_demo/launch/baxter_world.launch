@@ -1,0 +1,18 @@
+<launch>
+  <!-- Baxter in Gazebo plus the arm-gravity helper. The simulator's gravity emulation
+       (baxter_sim_kinematics) switches gravity off on the arm links and races the spawn;
+       a torque loop that adds gravity compensation then drives the arms upward. Use this
+       instead of the bare baxter_world.launch whenever a torque loop runs against the
+       simulator (baxter_mpc.launch includes the same helper). -->
+  <arg name="gui" default="true" doc="Open the Gazebo client" />
+  <arg name="paused" default="false" doc="Start the simulation paused" />
+  <arg name="headless" default="false" doc="Run gzserver without rendering" />
+
+  <include file="$(find baxter_gazebo)/launch/baxter_world.launch">
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="paused" value="$(arg paused)" />
+    <arg name="headless" value="$(arg headless)" />
+  </include>
+
+  <node name="enforce_arm_gravity" pkg="simulator_demo" type="enforce_arm_gravity.py" output="screen" />
+</launch>

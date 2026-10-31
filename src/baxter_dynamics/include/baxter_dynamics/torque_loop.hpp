@@ -44,6 +44,9 @@ struct TorqueLoopSettings {
   double diagnostics_rate_hz{50.0};
   /// An MPC reference older than this is stale; also the joint-command timeout [s].
   double acceleration_timeout_sec{0.2};
+  /// A joint state older than this (wall clock) is stale: no torque is commanded and
+  /// the arm is handed back to position mode so the robot's own watchdog can act [s].
+  double joint_state_timeout_sec{0.2};
   bool hold_when_idle{true};
   std::string hold_mode{"torque"};  ///< "torque" or "position".
   std::vector<double> hold_kp;      ///< Torque-space hold gain per joint [Nm/rad].
@@ -53,7 +56,8 @@ struct TorqueLoopSettings {
 
   /**
    * @brief Read the settings (`robot/control/spinner_threads`,
-   *        `robot/control/acceleration_ref_timeout_sec`, the two rate keys and
+   *        `robot/control/acceleration_ref_timeout_sec`,
+   *        `robot/control/joint_state_timeout_sec`, the two rate keys and
    *        `<settings_namespace>/{hold_when_idle,hold_mode,hold_kp,hold_kd,teleport_jump_rad}`).
    * @throw std::runtime_error on an invalid value.
    */

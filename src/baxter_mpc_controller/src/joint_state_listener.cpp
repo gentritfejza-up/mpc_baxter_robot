@@ -25,7 +25,9 @@ void OtherArmStateListener::onJointStates(const sensor_msgs::JointState::ConstPt
       if (message->name[entry] != joint_names_[joint]) continue;
       if (!std::isfinite(message->position[entry])) return;
       positions[joint] = message->position[entry];
-      if (entry < message->velocity.size() && std::isfinite(message->velocity[entry])) {
+      if (entry < message->velocity.size()) {
+        // A supplied but non-finite velocity is a corrupt message, not a resting joint.
+        if (!std::isfinite(message->velocity[entry])) return;
         velocities[joint] = message->velocity[entry];
       }
       seen[joint] = true;

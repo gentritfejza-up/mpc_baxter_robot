@@ -35,12 +35,6 @@
 
   <arg name="other_limb" value="$(eval 'right' if arg('limb') == 'left' else 'left')" />
 
-  <!-- Conveyor pose for the RViz markers (the floor constraint itself only needs z_min). -->
-  <param name="robot/geometry/conveyor/enabled" type="bool" value="true" />
-  <param name="robot/geometry/conveyor/x" type="double" value="$(arg conveyor_x)" />
-  <param name="robot/geometry/conveyor/y" type="double" value="$(arg conveyor_y)" />
-  <param name="robot/geometry/conveyor/yaw" type="double" value="$(arg conveyor_yaw)" />
-
   <!-- Torque loops: gravity comes from the robot, hardware effort limits, no damping term. -->
   <arg name="torque_launch"
        value="$(eval find('baxter_dynamics') + '/launch/lagrange_euler.launch' if arg('dynamics_backend') == 'lagrange_euler' else find('baxter_kdl_dynamics') + '/launch/kdl_inverse_dynamics.launch')" />
@@ -82,6 +76,14 @@
     <arg name="guard_mode" value="$(arg guard_mode)" />
     <arg name="z_min" value="$(arg z_min)" />
   </include>
+
+  <!-- Conveyor pose for the RViz markers (the floor constraint itself only needs z_min).
+       Placed after every include: the last definition of a parameter wins, and
+       mpc_controller.launch reloads config.yaml with the default conveyor pose. -->
+  <param name="robot/geometry/conveyor/enabled" type="bool" value="true" />
+  <param name="robot/geometry/conveyor/x" type="double" value="$(arg conveyor_x)" />
+  <param name="robot/geometry/conveyor/y" type="double" value="$(arg conveyor_y)" />
+  <param name="robot/geometry/conveyor/yaw" type="double" value="$(arg conveyor_yaw)" />
 
   <node if="$(arg auto_enable)" name="enable_baxter" pkg="baxter_tools" type="enable_robot.py"
         output="screen" args="-e" />

@@ -126,4 +126,6 @@ robot:
     lagrange_euler_diagnostics_rate_hz: 50.0
     # MPC references older than this are stale; also the joint-command timeout.
     acceleration_ref_timeout_sec: 0.3
+    # Joint states older than this stop the torque commands (watchdog hand-back).
+    joint_state_timeout_sec: 0.2
     spinner_threads: 5

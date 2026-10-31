@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -50,6 +51,8 @@ TorqueLoopSettings TorqueLoopSettings::load(ros::NodeHandle& nh,
   nh.param(keys.diagnostics_rate_key, settings.diagnostics_rate_hz, settings.diagnostics_rate_hz);
   nh.param("robot/control/acceleration_ref_timeout_sec", settings.acceleration_timeout_sec,
            settings.acceleration_timeout_sec);
+  nh.param("robot/control/joint_state_timeout_sec", settings.joint_state_timeout_sec,
+           settings.joint_state_timeout_sec);
   nh.param(ns + "hold_when_idle", settings.hold_when_idle, settings.hold_when_idle);
   nh.param<std::string>(ns + "hold_mode", settings.hold_mode, settings.hold_mode);
   if (settings.hold_mode != "position" && settings.hold_mode != "torque") {
@@ -63,7 +66,8 @@ TorqueLoopSettings TorqueLoopSettings::load(ros::NodeHandle& nh,
       settings.diagnostics_rate_hz <= 0.0 ||
       settings.diagnostics_rate_hz > settings.loop_rate_hz ||
       !std::isfinite(settings.acceleration_timeout_sec) ||
-      settings.acceleration_timeout_sec <= 0.0) {
+      settings.acceleration_timeout_sec <= 0.0 || !std::isfinite(settings.joint_state_timeout_sec) ||
+      settings.joint_state_timeout_sec <= 0.0) {
     throw std::runtime_error("Invalid torque loop timing parameters (" + keys.loop_rate_key +
                              ", " + keys.diagnostics_rate_key + ", robot/control/*)");
   }
@@ -126,6 +130,19 @@ void TorqueLoop::step(SteadyClock::time_point loop_start, double loop_dt_ms) {
 
   if (state.positions.size() != joint_count || state.velocities.size() != joint_count) {
     ROS_WARN_THROTTLE(1.0, "Waiting for a complete joint state");
+    return;
+  }
+  // A frozen joint state must not keep feeding torques to the robot: stop
+  // commanding so the robot's command watchdog expires and hand back control.
+  const double joint_state_age_sec =
+      state.received_at.isZero() ? std::numeric_limits<double>::infinity()
+                                 : (ros::WallTime::now() - state.received_at).toSec();
+  if (!(joint_state_age_sec <= settings_.joint_state_timeout_sec)) {
+    ROS_WARN_THROTTLE(1.0, "Joint state is stale (%.3f s); not commanding torque",
+                      joint_state_age_sec);
+    if (torque_mode_engaged_) leaveTorqueMode();
+    holding_ = false;
+    tracking_reference_ = false;
     return;
   }
   const bool reference_usable = reference.accelerations.size() == joint_count &&
